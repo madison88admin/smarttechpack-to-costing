@@ -1,0 +1,22 @@
+services:
+  smart-tp-costing:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: smart-tp-costing
+    restart: unless-stopped
+    ports:
+      - "3110:3110"
+    env_file:
+      - /opt/supabase/docker/.env
+      - .env.costing
+    environment:
+      NEXT_PUBLIC_SUPABASE_URL: http://supabase-kong:8000
+      PORT: 3110
+      HOSTNAME: 0.0.0.0
+    networks:
+      - supabase_default
+
+networks:
+  supabase_default:
+    external: true

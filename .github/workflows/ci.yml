@@ -1,0 +1,33 @@
+name: Smart TP Costing CI
+
+on:
+  push:
+    branches: [main, master, "codex/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm audit --omit=dev --audit-level=high
+      # The full gate: lint -> typecheck -> tests -> production build.
+      # Mirrors the local `npm run verify` contract exactly.
+      - run: npm run verify
+        env:
+          TP_COSTING_SESSION_SECRET: ci-only-session-secret-at-least-32-characters
+          NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:8000
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder
+          SUPABASE_SERVICE_ROLE_KEY: ci-placeholder
+          NEXTGEN_BASE_URL: https://nextgen.invalid
+          NEXTGEN_USERNAME: ci-placeholder
+          NEXTGEN_PASSWORD: ci-placeholder

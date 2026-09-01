@@ -1,0 +1,9 @@
+"use client";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+
+export default function ImportCbdPage() {
+  const router = useRouter(); const [file, setFile] = useState<File | null>(null); const [factory, setFactory] = useState(""); const [busy, setBusy] = useState(false); const [message, setMessage] = useState("");
+  async function submit(e: React.FormEvent) { e.preventDefault(); if (!file) return setMessage("Select an Excel CBD file first."); setBusy(true); setMessage(""); const body = new FormData(); body.append("file", file); body.append("factoryName", factory); const res = await fetch("/api/costing/requests/import-cbd", { method: "POST", body }); const json = await res.json(); setBusy(false); if (!res.ok || !json.ok) return setMessage(json.error ?? "Import failed"); setMessage(`Imported ${json.data.styleNumber} as ${json.data.requestNumber}. Opening request…`); router.push(`/requests/${json.data.id}`); }
+  return <main className="page-shell"><div className="panel" style={{ maxWidth: 720, margin: "40px auto" }}><p className="eyebrow">Template-driven intake</p><h1>Import Factory CBD</h1><p className="muted">Upload an FTY CBD workbook. The system creates a draft request and preserves the normal approval workflow.</p><form onSubmit={submit} className="grid" style={{ gap: 16, marginTop: 24 }}><label className="field"><span>Factory</span><input className="input" value={factory} onChange={e=>setFactory(e.target.value)} placeholder="e.g. PT U-Jump Indo" /></label><label className="field"><span>CBD Excel file</span><input className="input" type="file" accept=".xlsx,.xls" onChange={e=>setFile(e.target.files?.[0] ?? null)} /></label><button className="button" disabled={busy}>{busy ? "Importing…" : "Import as Draft"}</button>{message && <p className="notice">{message}</p>}</form></div></main>;
+}

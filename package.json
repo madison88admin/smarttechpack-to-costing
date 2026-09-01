@@ -1,0 +1,36 @@
+{
+  "name": "smart-tp-costing",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "dev:clean": "node -e \"const fs=require('fs');for (const d of ['.next','.next-dev']) fs.rmSync(d,{recursive:true,force:true})\" && next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --pool=threads --poolOptions.threads.singleThread=true",
+    "test:watch": "vitest",
+    "verify": "npm run lint && npm run typecheck && npm run test && npm run build"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "jszip": "^3.10.1",
+    "next": "^14.2.5",
+    "nodemailer": "^7.0.5",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "xlsx": "^0.18.5",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "@types/nodemailer": "^7.0.1",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "eslint": "^8.57.0",
+    "eslint-config-next": "^14.2.5",
+    "typescript": "^5.5.3",
+    "vitest": "^3.2.4"
+  }
+}
