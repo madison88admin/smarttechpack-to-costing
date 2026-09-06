@@ -10,7 +10,6 @@ const NON_APPROVED_STATUSES = [
   "needs_clarification",
   "for_costing_review",
   "for_pbd_review",
-  "pending_manager_approval",
   "rejected"
 ];
 

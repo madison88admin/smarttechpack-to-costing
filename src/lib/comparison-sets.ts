@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { pgrestValue } from "@/lib/supabase/filters";
 
 // Named, shareable Like Styles comparison sets.
 //
@@ -58,7 +59,7 @@ export async function getSavedComparisonSetByToken(token: string): Promise<Saved
   const { data, error } = await supabase
     .from("saved_comparison_sets")
     .select()
-    .eq("share_token", token)
+    .eq("share_token", pgrestValue(token))
     .maybeSingle();
 
   if (error) throw error;
@@ -70,7 +71,7 @@ export async function listSavedComparisonSetsForRequest(requestId: string): Prom
   const { data, error } = await supabase
     .from("saved_comparison_sets")
     .select()
-    .eq("request_id", requestId)
+    .eq("request_id", pgrestValue(requestId))
     .order("created_at", { ascending: false })
     .limit(50);
 

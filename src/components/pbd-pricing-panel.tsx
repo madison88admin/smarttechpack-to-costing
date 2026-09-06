@@ -53,7 +53,7 @@ export function PbdPricingPanel({
       .catch(() => undefined);
     return () => { active = false; };
   }, [requestId]);
-  const editable = canEdit && ["for_pbd_review", "pending_manager_approval"].includes(status);
+  const editable = canEdit && status === "for_pbd_review";
 
   async function save() {
     setBusy(true);

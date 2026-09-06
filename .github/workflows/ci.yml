@@ -31,3 +31,51 @@ jobs:
           NEXTGEN_BASE_URL: https://nextgen.invalid
           NEXTGEN_USERNAME: ci-placeholder
           NEXTGEN_PASSWORD: ci-placeholder
+
+  # Replays the hostile-param fuzz harness against a real Postgres + PostgREST
+  # + the app, so regressions like the status-filter hang (a raw value reaching
+  # PostgREST filter grammar) are caught on every PR — not just by the static
+  # guard and unit tests. The static choke-point guard (pgrest-chokepoint.test)
+  # catches the source pattern deterministically; this job catches platform-
+  # level behavior (PostgREST hangs/5xx) that only a live boot can prove.
+  # scripts/ci-fuzz-boot.sh stands up the stack: Postgres service below,
+  # PostgREST binary (runner-side), a /rest/v1 prefix proxy, the app dev
+  # server, then runs the harness as unauthenticated + pbd + admin.
+  fuzz-live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install psql and fetch PostgREST
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-client xz-utils
+          curl -fsSL -o /tmp/postgrest.tar.xz \
+            https://github.com/PostgREST/postgrest/releases/download/v14.17/postgrest-v14.17-linux-static-x86-64.tar.xz
+          tar -xJf /tmp/postgrest.tar.xz -C /tmp
+          chmod +x /tmp/postgrest
+      - name: Boot stack and replay hostile-param fuzz (anon + pbd + admin)
+        run: bash scripts/ci-fuzz-boot.sh
+        env:
+          POSTGREST_BIN: /tmp/postgrest
+          TP_COSTING_SESSION_SECRET: ci-fuzz-session-secret-at-least-32-characters
+          DB_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres

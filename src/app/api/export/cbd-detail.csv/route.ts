@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { pgrestValue } from "@/lib/supabase/filters";
+import { validateRequestId } from "@/lib/api/validate";
 import { csvResponse, toCsv } from "@/lib/export/csv";
 import { getCurrentRole } from "@/lib/auth/roles";
 import { getStatusesForRoles } from "@/lib/costing/requests";
@@ -40,7 +42,11 @@ export async function GET(request: Request) {
     .limit(200);
 
   if (requestId) {
-    query = query.eq("costing_request_id", requestId);
+    // Reject non-UUID values up front — a hostile requestId would otherwise
+    // fail Postgres' uuid cast and surface as a 500 instead of a 400.
+    const idError = validateRequestId(requestId);
+    if (idError) return idError;
+    query = query.eq("costing_request_id", pgrestValue(requestId));
   }
 
   // Role visibility: CBD detail must never leak requests the caller cannot see

@@ -1,4 +1,5 @@
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { pgrestValue } from "@/lib/supabase/filters";
 
 // In-app change alerts surfaced on the dashboard.
 //
@@ -76,7 +77,7 @@ export async function getUnreadInAppAlerts(role: string, opts: { requestId?: str
     .limit(100);
 
   if (opts.requestId) {
-    query = query.eq("costing_request_id", opts.requestId);
+    query = query.eq("costing_request_id", pgrestValue(opts.requestId));
   }
 
   const { data, error } = await query;

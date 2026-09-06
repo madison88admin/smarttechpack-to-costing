@@ -1,6 +1,7 @@
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { findBenchmarkLine, getMasterBenchmark } from "@/lib/costing/master-benchmark";
 import type { MasterBenchmarkLine } from "@/lib/costing/master-benchmark";
+import type { CostingStatus } from "@/lib/workflow/status";
 
 /**
  * Factory scorecard — internal analytics comparing factories on:
@@ -20,7 +21,7 @@ import type { MasterBenchmarkLine } from "@/lib/costing/master-benchmark";
 const OVER_BENCHMARK_PERCENT = 30;
 
 /** Stages tracked for cycle-time averages (completed segments only). */
-const TRACKED_STAGES = ["sent_to_factory", "for_costing_review", "for_pbd_review"];
+const TRACKED_STAGES: CostingStatus[] = ["sent_to_factory", "for_costing_review", "for_pbd_review"];
 
 export type ScorecardAction = {
   action: string;
@@ -139,7 +140,7 @@ export function computeFactoryScorecard(
       );
       for (let i = 0; i < actions.length; i++) {
         const entered = actions[i].to_status;
-        if (!entered || !TRACKED_STAGES.includes(entered)) continue;
+        if (!entered || !TRACKED_STAGES.includes(entered as CostingStatus)) continue;
         const duration = hoursBetween(actions[i].created_at, actions[i + 1]?.created_at ?? null);
         if (duration !== null && duration >= 0) {
           const list = stageHours.get(entered) ?? [];

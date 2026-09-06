@@ -1,5 +1,5 @@
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
-import type { CostingStatus } from "@/lib/workflow/status";
+import { internalReviewStatuses, terminalStatuses, type CostingStatus } from "@/lib/workflow/status";
 
 // Reporting aggregates for the Reports dashboard (/reports). All queries run
 // against tp_costing via the service client, matching the rest of the app.
@@ -116,13 +116,9 @@ export type ReportData = {
   rows: ReportRequestRow[];
 };
 
-const TERMINAL_STATUSES = ["approved", "rejected"];
-const INTERNAL_REVIEW_STATUSES: CostingStatus[] = [
-  "for_md_review",
-  "for_costing_review",
-  "for_pbd_review",
-  "pending_manager_approval"
-];
+// Both sets are owned by src/lib/workflow/status.ts.
+const TERMINAL_STATUSES = terminalStatuses;
+const INTERNAL_REVIEW_STATUSES = internalReviewStatuses;
 
 export type ReportFilters = {
   factory?: string | null;
@@ -267,7 +263,7 @@ export async function getReportData(filters: ReportFilters = {}): Promise<Report
   const rejectedCount = rows.filter((row) => row.status === "rejected").length;
   const inReviewCount = rows.filter((row) => (INTERNAL_REVIEW_STATUSES as string[]).includes(row.status)).length;
   const needsClarificationCount = rows.filter((row) => row.status === "needs_clarification").length;
-  const activeRequests = rows.filter((row) => !TERMINAL_STATUSES.includes(row.status)).length;
+  const activeRequests = rows.filter((row) => !TERMINAL_STATUSES.includes(row.status as CostingStatus)).length;
   const decided = approvedCount + rejectedCount;
   const approvalRate = decided > 0 ? (approvedCount / decided) * 100 : null;
   const averageApprovedCost = approvedCosts.length
@@ -557,7 +553,6 @@ function labelForStatus(status: string): string {
     for_md_review: "For MD Review",
     for_costing_review: "For Costing Review",
     for_pbd_review: "For PBD Review",
-    pending_manager_approval: "For PBD Review (legacy)",
     approved: "Approved",
     rejected: "Rejected"
   };

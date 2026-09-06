@@ -7,7 +7,6 @@ export type CostingStatus =
   | "for_md_review"
   | "for_costing_review"
   | "for_pbd_review"
-  | "pending_manager_approval"
   | "approved"
   | "rejected"
   // Display-only status used to mask internal review stages from factory users.
@@ -20,7 +19,6 @@ export const statusLabels: Record<CostingStatus, string> = {
   for_md_review: "For MD Review",
   for_costing_review: "For Costing Review",
   for_pbd_review: "For PBD Review",
-  pending_manager_approval: "For PBD Review",
   approved: "Internally Approved",
   rejected: "Internally Rejected",
   under_review: "Under Review"
@@ -33,7 +31,6 @@ export const statusTone: Record<CostingStatus, "neutral" | "blue" | "amber" | "g
   for_md_review: "blue",
   for_costing_review: "blue",
   for_pbd_review: "amber",
-  pending_manager_approval: "amber",
   approved: "green",
   rejected: "red",
   under_review: "blue"
@@ -46,10 +43,22 @@ export const phaseOneStatuses: CostingStatus[] = [
   "for_md_review",
   "for_costing_review",
   "for_pbd_review",
-  "pending_manager_approval",
   "approved",
   "rejected"
 ];
+
+/** Statuses that still count as active (open) requests — everything but the terminal outcomes. */
+export const activeStatuses: CostingStatus[] = [
+  "draft",
+  "sent_to_factory",
+  "needs_clarification",
+  "for_md_review",
+  "for_costing_review",
+  "for_pbd_review"
+];
+
+/** Terminal (closed) workflow statuses. */
+export const terminalStatuses: CostingStatus[] = ["approved", "rejected"];
 
 /**
  * Internal review stages that factory users must never see by name. These are
@@ -58,8 +67,7 @@ export const phaseOneStatuses: CostingStatus[] = [
 export const internalReviewStatuses: CostingStatus[] = [
   "for_md_review",
   "for_costing_review",
-  "for_pbd_review",
-  "pending_manager_approval"
+  "for_pbd_review"
 ];
 
 /** Statuses the factory can act on directly. */
@@ -77,8 +85,8 @@ export const factoryHiddenStatuses: CostingStatus[] = [...internalReviewStatuses
 
 /**
  * Masks internal review statuses for factory users so they cannot see which
- * internal stage (MD, Costing, PBD, Manager) a request is in — those become
- * the generic "Under Review". Every other role sees the real status.
+ * internal stage (MD, Costing, PBD) a request is in — those become the
+ * generic "Under Review". Every other role sees the real status.
  */
 export function maskStatusForRole(status: string, role: UserRole | string): CostingStatus {
   if (role === "factory" && internalReviewStatuses.includes(status as CostingStatus)) {

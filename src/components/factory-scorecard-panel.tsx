@@ -34,7 +34,7 @@ export function FactoryScorecardPanel({ scorecard }: { scorecard: FactoryScoreca
           <h2>Factory Scorecard</h2>
         </div>
         <span className="status blue">
-          {rows.length} factory{rows.length === 1 ? "" : "ies"} · {scorecard.benchmarkLines} benchmark lines
+          {rows.length} factor{rows.length === 1 ? "y" : "ies"} · {scorecard.benchmarkLines} benchmark lines
         </span>
       </div>
       <p className="chart-caption">

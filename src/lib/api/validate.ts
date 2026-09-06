@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z, type ZodSchema } from "zod";
+import { routeActionNames } from "@/lib/costing/actions";
 
 /**
  * Preprocess helper: converts empty strings / null / undefined to undefined
@@ -128,12 +129,10 @@ export const bulkCreateSchema = z.object({
   customer: customerSchema
 });
 
+// The action vocabulary is owned by src/lib/costing/actions.ts; this schema
+// accepts exactly the actions-route subset (everything except factory `submit`).
 export const actionSchema = z.object({
-  action: z.enum([
-    "approve", "reject", "clarify",
-    "send_to_factory",
-    "costing_complete", "costing_clarify"
-  ]),
+  action: z.enum(routeActionNames as [string, ...string[]]),
   comment: z.string().trim().max(2000).optional()
 });
 

@@ -52,8 +52,6 @@ export function getSlaDays(status: string, settings: WorkflowSettings): number |
     case "sent_to_factory":
     case "needs_clarification":
       return settings.factorySubmissionSlaDays;
-    case "pending_manager_approval":
-      return settings.approvalSlaDays;
     default:
       return null;
   }

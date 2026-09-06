@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LikeStyleMatch } from "@/lib/costing/history";
 import { CopyShareLink } from "@/components/copy-share-link";
 import {
@@ -57,6 +57,9 @@ export function LikeStylesSearch() {
     customers: [],
     seasons: [],
   });
+  // Serialized filters of the last executed search — the auto-search effect
+  // compares against this so picking the same values twice never refires.
+  const lastSearchedRef = useRef("");
   // The query that produced the current results — reuse it for the CSV/XLSX
   // export links so the saved comparison set matches what is on screen.
   const [lastQuery, setLastQuery] = useState("");
@@ -159,9 +162,26 @@ export function LikeStylesSearch() {
     if (!saved) return;
     setFilters(saved);
     if (hasLikeStylesCriteria(saved)) {
+      lastSearchedRef.current = serializeLikeStylesPrefs(saved);
       runSearch(saved);
     }
   }, [runSearch]);
+
+  // Auto-search as filters change — no "Find" click needed. Debounced so
+  // typing a yarn name or picking dropdown values fires once the user pauses.
+  // Skips when the filters match the last executed search (mount restore,
+  // repeat picks) or when every filter is empty.
+  useEffect(() => {
+    if (!hasLikeStylesCriteria(filters)) return;
+    const key = serializeLikeStylesPrefs(filters);
+    if (key === lastSearchedRef.current) return;
+    const timer = setTimeout(() => {
+      lastSearchedRef.current = key;
+      persistFilters(filters);
+      runSearch(filters);
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [filters, runSearch]);
 
   return (
     <section className="panel">
@@ -169,6 +189,7 @@ export function LikeStylesSearch() {
         className="toolbar"
         style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 8 }}
         onSubmit={(event) => {
+          lastSearchedRef.current = serializeLikeStylesPrefs(filters);
           persistFilters(filters);
           runSearch(filters, event);
         }}
@@ -311,8 +332,15 @@ export function LikeStylesSearch() {
           {results.map((row) => (
             <li key={row.id}>
               <strong>{row.style_number ?? "No style"}</strong>
-              <span className="activity-role">{row.matchScore} match</span>
+              <span className="activity-role">{row.matchScore} match ({row.scorePercent}%)</span>
+              {row.confidence ? (
+                <span className={`status ${row.confidence === "high" ? "green" : row.confidence === "medium" ? "amber" : "red"}`}>
+                  {row.confidence === "high" ? "High" : row.confidence === "medium" ? "Medium" : "Low"} confidence
+                </span>
+              ) : null}
               {row.matchReasons.length ? <span className="eyebrow"> — {row.matchReasons.join(", ")}</span> : null}
+              <br />
+              <span className="eyebrow">Based on {row.sampleSize} historical costing{row.sampleSize === 1 ? "" : "s"} · Factory / Brand / Customer / Season are weighted in the score</span>
               <br />
               {row.factory_name ?? "Unassigned"} / {row.currency ?? "USD"} {row.total_cost?.toFixed(2) ?? "Pending"}
               {row.yarn_type || row.knit_type || row.machine_type ? (

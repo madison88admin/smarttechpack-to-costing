@@ -20,7 +20,6 @@ const ALL_STATUSES: CostingStatus[] = [
   "for_md_review",
   "for_costing_review",
   "for_pbd_review",
-  "pending_manager_approval",
   "approved",
   "rejected"
 ];

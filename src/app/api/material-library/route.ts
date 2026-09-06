@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { canManageMaterialLibrary, getCurrentRole } from "@/lib/auth/roles";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { pgrestOrTerms, pgrestValue } from "@/lib/supabase/filters";
 
 // GET /api/material-library?q=xxx&category=xxx — search material library
 export async function GET(request: Request) {
@@ -21,12 +22,12 @@ export async function GET(request: Request) {
     .limit(500);
 
   if (q.trim()) {
-    // Search across material_name OR specification OR composition
-    const term = `%${q.trim()}%`;
-    query = query.or(`material_name.ilike.${term},specification.ilike.${term},composition.ilike.${term},supplier_name.ilike.${term}`);
+    // Search across material_name OR specification OR composition. Quote the
+    // term so spaces/commas are literal, not PostgREST filter grammar.
+    query = query.or(pgrestOrTerms(["material_name", "specification", "composition", "supplier_name"], q.trim()));
   }
   if (category.trim()) {
-    query = query.eq("category", category.trim());
+    query = query.eq("category", pgrestValue(category.trim()));
   }
 
   const { data, error } = await query;

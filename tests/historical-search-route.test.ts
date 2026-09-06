@@ -67,6 +67,8 @@ describe("GET /api/historical/search", () => {
     expect(body.data[0].style_number).toBe("M8833541");
 
     const query = calls.find((c) => c.table === "historical_costings" && c.terminal === "select");
+    // The term reaches the filter quoted (PostgREST filter-value hardening);
+    // quoted ilike patterns match the same rows and are immune to commas/spaces.
     expect(query?.chain.ilike).toEqual([["searchable_text", "%M8833541%"]]);
   });
 

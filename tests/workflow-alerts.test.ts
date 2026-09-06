@@ -40,6 +40,45 @@ describe("bomChangedAlertBody", () => {
     expect(subject).toContain("3 field(s)");
     expect(body).toContain("FOB: USD 10.00 → USD 12.50 (+25.0%)");
   });
+
+  it("lists per-field old → new lines when changes are provided", () => {
+    const { body } = bomChangedAlertBody({
+      requestNumber: "CR-1",
+      factoryName: "Hangzhou U-Jump",
+      changedCount: 2,
+      fobBefore: 10,
+      fobAfter: 12.5,
+      currency: "USD",
+      changes: [
+        { field: "Labor Cost", oldValue: "0.75", newValue: "0.80" },
+        { field: "MOQ", oldValue: "500", newValue: "1000" }
+      ]
+    });
+
+    expect(body).toContain("• Labor Cost: 0.75 → 0.80");
+    expect(body).toContain("• MOQ: 500 → 1000");
+  });
+
+  it("caps the field list and notes the remainder", () => {
+    const changes = Array.from({ length: 10 }, (_, i) => ({
+      field: `Field ${i}`,
+      oldValue: "0",
+      newValue: "1"
+    }));
+    const { body } = bomChangedAlertBody({
+      requestNumber: "CR-1",
+      factoryName: null,
+      changedCount: 10,
+      fobBefore: 1,
+      fobAfter: 2,
+      currency: "USD",
+      changes
+    });
+
+    expect(body).toContain("• Field 7: 0 → 1");
+    expect(body).not.toContain("• Field 8: 0 → 1");
+    expect(body).toContain("…and 2 more field(s)");
+  });
 });
 
 describe("outlierAcknowledgedAlertBody", () => {
@@ -86,6 +125,22 @@ describe("pbdPricingAlertBody", () => {
     expect(body).toContain("Updated by: PBD Test User");
     expect(body).toContain("Wholesale price: USD 9.50");
     expect(body).toContain("Retail price: —");
+  });
+
+  it("shows old → new when previous prices are provided", () => {
+    const { body } = pbdPricingAlertBody({
+      requestNumber: "CR-2",
+      factoryName: "Other Factory",
+      wholesalePrice: 9.5,
+      retailPrice: 18.0,
+      currency: "USD",
+      changedBy: "PBD Test User",
+      wholesaleBefore: 8.0,
+      retailBefore: null
+    });
+
+    expect(body).toContain("Wholesale price: USD 8.00 → USD 9.50");
+    expect(body).toContain("Retail price: USD 18.00");
   });
 });
 
@@ -171,6 +226,28 @@ describe("enqueueCostingChangeAlert", () => {
     );
     expect((inserts(calls, "in_app_alerts")[0] as any).alert_type).toBe("pbd_pricing_updated");
     delete process.env.COSTING_NOTIFICATION_EMAIL;
+  });
+
+  it("stores per-field changes on the in-app payload when provided", async () => {
+    const { client, calls } = createMockSupabase(responder());
+    mocks.client = client;
+
+    await enqueueCostingChangeAlert({
+      requestId: "req-1",
+      requestNumber: "CR-1",
+      factoryName: "Hangzhou U-Jump",
+      subject: "subject",
+      body: "body",
+      kind: "bom_changed",
+      changes: ["Labor Cost: 0.75 → 0.80"]
+    });
+
+    const inApp = inserts(calls, "in_app_alerts");
+    expect(inApp).toHaveLength(1);
+    expect((inApp[0] as any).payload).toEqual({
+      kind: "bom_changed",
+      changes: ["Labor Cost: 0.75 → 0.80"]
+    });
   });
 
   it("never throws — a failed recipient lookup degrades to zero enqueued", async () => {

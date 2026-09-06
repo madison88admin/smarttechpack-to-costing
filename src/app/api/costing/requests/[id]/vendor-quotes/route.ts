@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { canRunPbdAction, getCurrentRole } from "@/lib/auth/roles";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { pgrestValue } from "@/lib/supabase/filters";
 import { validateRequestId } from "@/lib/api/validate";
 
 // GET /api/costing/requests/[id]/vendor-quotes — list all vendor quotes for a request
@@ -90,7 +91,7 @@ export async function PUT(request: Request, context: { params: { id: string } })
   const { error } = await supabase
     .from("vendor_quotes")
     .update(updates)
-    .eq("id", String(body.quoteId))
+    .eq("id", pgrestValue(String(body.quoteId)))
     .eq("costing_request_id", context.params.id);
 
   if (error) {
@@ -120,7 +121,7 @@ export async function DELETE(request: Request, context: { params: { id: string }
   const { error } = await supabase
     .from("vendor_quotes")
     .delete()
-    .eq("id", quoteId)
+    .eq("id", pgrestValue(quoteId))
     .eq("costing_request_id", context.params.id);
 
   if (error) {

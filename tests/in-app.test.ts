@@ -118,7 +118,7 @@ describe("getUnreadInAppAlerts", () => {
     const query = calls.find((call) => call.table === "in_app_alerts" && call.terminal === "select");
     expect(query!.chain.eq).toEqual([
       ["recipient_role", "costing"],
-      ["costing_request_id", "req-1"]
+      ["costing_request_id", "req-1"] // unquoted — quoting never matches on this server
     ]);
   });
 

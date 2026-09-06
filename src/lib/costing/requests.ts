@@ -1,4 +1,6 @@
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { pgrestLike, pgrestOrTerms, pgrestValue } from "@/lib/supabase/filters";
+import { phaseOneStatuses, type CostingStatus } from "@/lib/workflow/status";
 
 export type CreateCostingRequestInput = {
   nextgenEntityId?: string;
@@ -169,8 +171,10 @@ export type CostingRequestDetail = {
 
 export async function listCostingRequests(input?: { query?: string; status?: string; brand?: string; customer?: string; season?: string; from?: string; to?: string; limit?: number; offset?: number; roles?: string[]; sortBy?: string; sortDir?: "asc" | "desc" }) {
   const supabase = createSupabaseServiceClient();
-  const pageSize = input?.limit ?? 5;
-  const offset = input?.offset ?? 0;
+  // Clamp pagination so hostile numeric params (1e18, -1, NaN) can never
+  // reach PostgREST's range() as an invalid or unbounded window.
+  const pageSize = Math.min(Math.max(Number.isFinite(input?.limit) ? (input?.limit ?? 5) : 5, 1), 5000);
+  const offset = Math.min(Math.max(Number.isFinite(input?.offset) ? (input?.offset ?? 0) : 0, 0), 1000000);
   const sortBy = input?.sortBy ?? "created_at";
   const sortDir = input?.sortDir ?? "desc";
 
@@ -209,27 +213,34 @@ export async function listCostingRequests(input?: { query?: string; status?: str
     .order(sortBy, { ascending: sortDir === "asc" })
     .range(offset, offset + pageSize - 1);
 
-  if (input?.status && input.status !== "all") {
-    request = request.eq("status", input.status);
+  // User-supplied status is validated against the canonical workflow statuses
+  // (src/lib/workflow/status.ts — the single owner of the status vocabulary)
+  // before it reaches PostgREST. An arbitrary value (e.g. one containing
+  // spaces or operators like "x OR 1=1") would otherwise be parsed as part of
+  // the filter grammar and can hang or error the request — treat it as "no
+  // status filter" instead.
+  const knownStatus = input?.status && phaseOneStatuses.includes(input.status as CostingStatus) ? input.status : null;
+  if (knownStatus && knownStatus !== "all") {
+    request = request.eq("status", knownStatus);
   }
   if (input?.brand?.trim()) {
-    request = request.ilike("brand", `%${input.brand.trim()}%`);
+    request = request.ilike("brand", pgrestLike(input.brand.trim()));
   }
   if (input?.customer?.trim()) {
-    request = request.ilike("customer", `%${input.customer.trim()}%`);
+    request = request.ilike("customer", pgrestLike(input.customer.trim()));
   }
   if (input?.season?.trim()) {
-    request = request.ilike("season", `%${input.season.trim()}%`);
+    request = request.ilike("season", pgrestLike(input.season.trim()));
   }
   if (input?.from?.trim()) {
-    request = request.gte("created_at", input.from.trim());
+    request = request.gte("created_at", pgrestValue(input.from.trim()));
   }
   if (input?.to?.trim()) {
     // inclusive to end of day
     const toDate = new Date(input.to.trim());
     if (!Number.isNaN(toDate.getTime())) {
       toDate.setDate(toDate.getDate() + 1);
-      request = request.lt("created_at", toDate.toISOString().slice(0, 10));
+      request = request.lt("created_at", pgrestValue(toDate.toISOString().slice(0, 10)));
     }
   }
 
@@ -244,34 +255,36 @@ export async function listCostingRequests(input?: { query?: string; status?: str
   const query = input?.query?.trim();
 
   if (query) {
-    request = request.or(
-      [
-        `request_number.ilike.%${query}%`,
-        `factory_name.ilike.%${query}%`
-      ].join(",")
-    );
+    // PostgREST parses commas inside unquoted `.or()` filter values as branch
+    // separators (PGRST100 → 500), so or-terms are built through the shared
+    // helper which quotes the value — verified live: quoted or() values are
+    // stripped by the grammar and match correctly on this server.
+    request = request.or(pgrestOrTerms(["request_number", "factory_name"], query));
   }
 
   const { data, error, count } = await request;
 
-  if (error) throw error;
+  if (error) {
+    // PostgREST answers 416 / PGRST103 when the requested range starts beyond
+    // the available rows (deep pagination past the end, or a hostile offset).
+    // That is an empty page, not an error — the client asked for rows that do
+    // not exist yet.
+    if ((error as { code?: string }).code === "PGRST103") {
+      return { data: [], total: count ?? 0 };
+    }
+    throw error;
+  }
 
   return { data: data ?? [], total: count ?? 0 };
 }
 
-// Map roles to the statuses they are allowed to see
+// Map roles to the statuses they are allowed to see. The status vocabulary
+// is owned by src/lib/workflow/status.ts (phaseOneStatuses — the full
+// workflow set; migration 014 moved any legacy `pending_manager_approval`
+// rows to `for_pbd_review`). This function only derives role visibility from
+// that canonical set.
 export function getStatusesForRoles(roles: string[]): string[] {
-  const allStatuses = [
-    "draft",
-    "sent_to_factory",
-    "needs_clarification",
-    "for_md_review",
-    "for_costing_review",
-    "for_pbd_review",
-    "pending_manager_approval",
-    "approved",
-    "rejected"
-  ];
+  const allStatuses = phaseOneStatuses;
 
   // Super Admin and Admin see everything
   if (roles.includes("superadmin") || roles.includes("admin")) {
@@ -286,7 +299,7 @@ export function getStatusesForRoles(roles: string[]): string[] {
   const statuses = new Set<string>();
 
   // PBD sees: draft (they create), sent_to_factory (they sent it), for_md_review / for_costing_review (track progress),
-  // for_pbd_review (Costing has validated), needs_clarification, pending_manager_approval, approved, rejected
+  // for_pbd_review (Costing has validated), needs_clarification, approved, rejected
   if (roles.includes("pbd")) {
     statuses.add("draft");
     statuses.add("sent_to_factory");
@@ -294,7 +307,6 @@ export function getStatusesForRoles(roles: string[]): string[] {
     statuses.add("for_costing_review");
     statuses.add("for_pbd_review");
     statuses.add("needs_clarification");
-    statuses.add("pending_manager_approval");
     statuses.add("approved");
     statuses.add("rejected");
   }
@@ -306,16 +318,15 @@ export function getStatusesForRoles(roles: string[]): string[] {
     statuses.add("for_costing_review");
     statuses.add("for_pbd_review");
     statuses.add("needs_clarification");
-    statuses.add("pending_manager_approval");
     statuses.add("approved");
     statuses.add("rejected");
   }
 
   // Factory sees ONLY requests that are theirs to act on: drafts assigned to
   // them, sent_to_factory, and needs_clarification (CBD returned to them).
-  // Requests in the Madison88 internal review stages (MD/Costing/PBD/Manager)
-  // and the terminal "internally approved" outcome are invisible to the
-  // factory — the internal team owns the request from review until decision.
+  // Requests in the Madison88 internal review stages (MD/Costing/PBD) and the
+  // terminal "internally approved" outcome are invisible to the factory — the
+  // internal team owns the request from review until decision.
   if (roles.includes("factory")) {
     statuses.add("draft");
     statuses.add("sent_to_factory");
@@ -323,10 +334,10 @@ export function getStatusesForRoles(roles: string[]): string[] {
     statuses.add("rejected");
   }
 
-  // Managers need a dedicated approval queue and read-only visibility after decision.
+  // Manager is a legacy alias for the PBD approver: the dedicated approval
+  // queue and read-only visibility after decision.
   if (roles.includes("manager")) {
     statuses.add("for_pbd_review");
-    statuses.add("pending_manager_approval");
     statuses.add("approved");
     statuses.add("rejected");
   }

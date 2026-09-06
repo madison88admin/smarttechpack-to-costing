@@ -4,6 +4,7 @@ import { recordWorkflowEvent } from "@/lib/workflow/events";
 import { canRunPbdAction, getCurrentRole, getCurrentUserId } from "@/lib/auth/roles";
 import { validateRequestId } from "@/lib/api/validate";
 import {
+  assertCustomerReviewEditable,
   assertCustomerStatusKnown,
   assertCustomerStatusTransition,
   computeRevisionNumber,
@@ -47,10 +48,20 @@ export async function POST(request: Request, context: { params: { id: string } }
   const supabase = createSupabaseServiceClient();
   const { data: current, error: currentError } = await supabase
     .from("costing_requests")
-    .select("customer_status,customer_revision_number")
+    .select("status,customer_status,customer_revision_number")
     .eq("id", context.params.id)
     .single();
   if (currentError) return NextResponse.json({ ok: false, error: currentError.message }, { status: 500 });
+
+  // The external review may only be driven after the internal approval. This
+  // server-side gate mirrors the UI, which hides the action buttons until the
+  // request is approved (a rejected-for-revision request reopens after its new
+  // approval, never while it sits in the factory correction queue).
+  const approvalGateError = assertCustomerReviewEditable(String(current.status ?? ""));
+  if (approvalGateError) {
+    return NextResponse.json({ ok: false, error: approvalGateError }, { status: 409 });
+  }
+
   const currentStatus = String(current.customer_status ?? "not_submitted");
   const transitionError = assertCustomerStatusTransition(currentStatus, status);
   if (transitionError) {

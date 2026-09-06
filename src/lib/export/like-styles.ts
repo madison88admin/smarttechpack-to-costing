@@ -19,6 +19,9 @@ export const LIKE_STYLES_EXPORT_HEADERS = [
   "knitting_time",
   "approved_at",
   "match_score",
+  "match_score_percent",
+  "match_confidence",
+  "match_sample_size",
   "match_reasons",
   "matching_notes",
   "costing_request_id"
@@ -38,6 +41,9 @@ export type LikeStylesExportRow = {
   knitting_time: number | string;
   approved_at: string;
   match_score: number;
+  match_score_percent: number;
+  match_confidence: string;
+  match_sample_size: number;
   match_reasons: string;
   matching_notes: string;
   costing_request_id: string;
@@ -58,6 +64,9 @@ export function buildLikeStylesExportRows(results: LikeStyleMatch[]): LikeStyles
     knitting_time: row.knitting_time ?? "",
     approved_at: row.approved_at ?? "",
     match_score: row.matchScore,
+    match_score_percent: row.scorePercent,
+    match_confidence: row.confidence,
+    match_sample_size: row.sampleSize,
     match_reasons: row.matchReasons.join(", "),
     matching_notes: row.matchingNotes.map((note) => `${note.note_type}: ${note.note}`).join(" | "),
     costing_request_id: row.costing_request_id ?? ""

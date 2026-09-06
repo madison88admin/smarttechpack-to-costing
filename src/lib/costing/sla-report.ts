@@ -1,6 +1,6 @@
 import { bucketKey, type ReportGranularity } from "@/lib/reporting";
 import { ownerRoleForStatus, type AgingRow } from "@/lib/costing/aging";
-import { statusLabels, type CostingStatus } from "@/lib/workflow/status";
+import { activeStatuses, statusLabels, type CostingStatus } from "@/lib/workflow/status";
 
 // SLA-compliance breakdown for the Reports dashboard. Pure aggregation over
 // the aging rows (the same point-in-time data as the dashboard SLA report),
@@ -43,16 +43,8 @@ export type SlaScopeFilters = {
   to?: string | null;
 };
 
-/** Stages with an SLA, in workflow order. */
-const TRACKED_STATUSES: CostingStatus[] = [
-  "draft",
-  "sent_to_factory",
-  "needs_clarification",
-  "for_md_review",
-  "for_costing_review",
-  "for_pbd_review",
-  "pending_manager_approval"
-];
+/** Stages with an SLA, in workflow order — owned by status.ts. */
+const TRACKED_STATUSES = activeStatuses;
 
 export function computeSlaBreakdown(
   rows: AgingRow[],

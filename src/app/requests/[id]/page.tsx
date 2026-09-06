@@ -20,7 +20,8 @@ import { WhatIfAnalyzer } from "@/components/what-if-analyzer";
 import { computeGrossMarginInfo, generateSmartReviewSync } from "@/lib/ai/smart-review";
 import { isHistoricalNextGenStatus, nextGenMetaFromRaw } from "@/lib/nextgen/product-meta";
 import { defaultWorkflowSettings, getWorkflowSettings } from "@/lib/admin/settings";
-import { canRunPbdAction, canRunCostingAction, canRunMdAction, getCurrentRole } from "@/lib/auth/roles";
+import { canRunPbdAction, canRunCostingAction, canRunMdAction, getCurrentRole, getCurrentUserId } from "@/lib/auth/roles";
+import { resolveFactoryProfileId } from "@/lib/admin/assignments";
 import { getChecklistResults } from "@/lib/costing/checklist";
 import { tryGetLastOutlierAcknowledgement } from "@/lib/costing/outlier-review";
 import { tryGetCostingRequest } from "@/lib/costing/requests";
@@ -162,6 +163,15 @@ export default async function RequestDetailPage({ params }: { params: { id: stri
   ]);
 
   const status = isCostingStatus(data.status) ? data.status : "draft";
+  // Factory users only see requests assigned to them — otherwise one factory
+  // could open another factory's URL and read its CBD totals, vendor quotes,
+  // benchmarks, and decision history. Unassigned requests bounce to the queue.
+  if (role === "factory") {
+    const factoryProfileId = await resolveFactoryProfileId(getCurrentUserId()).catch(() => null);
+    if (!factoryProfileId || data.assigned_factory_user_id !== factoryProfileId) {
+      redirect("/factory");
+    }
+  }
   // Factory must not see requests that are with Madison88 (MD/Costing/PBD/Manager)
   // or that are internally approved — those are invisible to the factory.
   if (role === "factory" && factoryHiddenStatuses.includes(status)) {
@@ -590,7 +600,9 @@ export default async function RequestDetailPage({ params }: { params: { id: stri
                     customerDecisionAt={data?.customer_decision_at}
                     revisionDueAt={data?.customer_revision_due_at}
                     revisionNumber={data?.customer_revision_number ?? 0}
-                    canEdit={canRunPbdAction(role)}
+                    // External review actions only open after internal approval —
+                    // mirrors the server gate in the customer-status route.
+                    canEdit={canRunPbdAction(role) && status === "approved"}
                   />
                 )
               },
@@ -707,7 +719,7 @@ export default async function RequestDetailPage({ params }: { params: { id: stri
                     ) : null}
                     <section className="panel">
                       <p className="eyebrow">Internal decision</p>
-                      <h2>{status === "for_pbd_review" || status === "pending_manager_approval" ? "Awaiting PBD internal approval" : formatStatus(status)}</h2>
+                      <h2>{status === "for_pbd_review" ? "Awaiting PBD internal approval" : formatStatus(status)}</h2>
                       <p className="eyebrow">Use the action bar above to approve, reject, or request clarification. Approval actions are recorded with the authenticated user and timestamp.</p>
                     </section>
                     <section className="panel">

@@ -147,7 +147,7 @@ textarea {
   color: #d9e4df;
   margin-bottom: 6px;
   font-size: 14px;
-  transition: background 0.2s ease, color 0.2s ease, transform 0.2s ease;
+  transition: background 0.12s ease, color 0.12s ease, transform 0.12s ease;
 }
 
 .nav-link.active,
@@ -163,7 +163,7 @@ textarea {
 }
 
 .nav-link:hover {
-  transform: translateX(3px);
+  transform: translateX(2px);
 }
 
 .sidebar-footer {
@@ -280,11 +280,11 @@ h3 {
   font-weight: 700;
   cursor: pointer;
   box-shadow: 0 8px 22px rgba(36, 92, 79, 0.14);
-  transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease, opacity 0.18s ease;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease, opacity 0.12s ease;
 }
 
 .button:hover {
-  transform: translateY(-2px);
+  transform: translateY(-1px);
   box-shadow: 0 12px 30px rgba(36, 92, 79, 0.22);
 }
 
@@ -326,7 +326,7 @@ h3 {
   padding: 14px;
   background: rgba(255, 255, 255, 0.82);
   box-shadow: 0 10px 30px rgba(20, 35, 31, 0.06);
-  transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
 }
 
 .process-step:hover {
@@ -391,11 +391,11 @@ h3 {
   border-radius: 18px;
   padding: 18px;
   box-shadow: 0 10px 26px rgba(20, 35, 31, 0.05);
-  transition: transform 0.22s ease, box-shadow 0.22s ease;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
 .metric:hover {
-  transform: translateY(-3px);
+  transform: translateY(-2px);
   box-shadow: 0 16px 40px rgba(20, 35, 31, 0.1);
 }
 
@@ -470,7 +470,7 @@ h3 {
   border-radius: 18px;
   padding: 20px;
   box-shadow: 0 10px 30px rgba(20, 35, 31, 0.05);
-  transition: box-shadow 0.22s ease, border-color 0.22s ease;
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
 }
 
 .panel:hover {
@@ -1412,7 +1412,7 @@ h3 {
 
 .table-action:hover {
   background: var(--brand-soft);
-  transform: scale(1.04);
+  transform: scale(1.02);
 }
 
 .status {
@@ -1576,7 +1576,7 @@ h3 {
 @keyframes fadeInUp {
   from {
     opacity: 0;
-    transform: translateY(16px);
+    transform: translateY(6px);
   }
   to {
     opacity: 1;
@@ -1587,7 +1587,7 @@ h3 {
 @keyframes slideInLeft {
   from {
     opacity: 0;
-    transform: translateX(-16px);
+    transform: translateX(-6px);
   }
   to {
     opacity: 1;
@@ -1632,61 +1632,43 @@ h3 {
   }
 }
 
+/* Motion policy: one fast page fade only. Per-component entrance animations
+   (panels, lists, table rows) re-trigger on every re-render — e.g. each
+   keystroke in a filter — so they are removed; hover transitions carry the
+   interactivity instead. Staggers are capped at ~0.1s total. */
+
 /* Page content fade-in */
 .content {
-  animation: fadeIn 0.4s ease;
+  animation: fadeIn 0.15s ease;
 }
 
 /* Hero entrance */
 .hero {
-  animation: fadeInUp 0.5s ease;
+  animation: fadeInUp 0.25s ease;
 }
 
-/* Metric cards stagger */
-.metrics .metric:nth-child(1) { animation: fadeInUp 0.45s ease 0.05s both; }
-.metrics .metric:nth-child(2) { animation: fadeInUp 0.45s ease 0.12s both; }
-.metrics .metric:nth-child(3) { animation: fadeInUp 0.45s ease 0.19s both; }
-.metrics .metric:nth-child(4) { animation: fadeInUp 0.45s ease 0.26s both; }
+/* Metric cards: subtle stagger, all visible within ~0.3s */
+.metrics .metric { animation: fadeInUp 0.25s ease both; }
+.metrics .metric:nth-child(2) { animation-delay: 0.03s; }
+.metrics .metric:nth-child(3) { animation-delay: 0.06s; }
+.metrics .metric:nth-child(4) { animation-delay: 0.09s; }
 
-/* Process strip stagger */
-.process-step:nth-child(1) { animation: fadeInUp 0.4s ease 0.1s both; }
-.process-step:nth-child(2) { animation: fadeInUp 0.4s ease 0.18s both; }
-.process-step:nth-child(3) { animation: fadeInUp 0.4s ease 0.26s both; }
-.process-step:nth-child(4) { animation: fadeInUp 0.4s ease 0.34s both; }
-.process-step:nth-child(5) { animation: fadeInUp 0.4s ease 0.42s both; }
+/* Process strip: same capped stagger */
+.process-step { animation: fadeInUp 0.25s ease both; }
+.process-step:nth-child(2) { animation-delay: 0.03s; }
+.process-step:nth-child(3) { animation-delay: 0.06s; }
+.process-step:nth-child(4) { animation-delay: 0.09s; }
+.process-step:nth-child(5) { animation-delay: 0.12s; }
 
-/* Panel entrance */
-.panel {
-  animation: fadeInUp 0.45s ease;
-}
+/* Panels render with the page fade — no separate entrance (they previously
+   re-animated on every parent re-render). Hover transitions below stay. */
 
-/* List items stagger */
-.list li {
-  animation: slideInLeft 0.35s ease both;
-}
-
-.list li:nth-child(1) { animation-delay: 0.03s; }
-.list li:nth-child(2) { animation-delay: 0.07s; }
-.list li:nth-child(3) { animation-delay: 0.11s; }
-.list li:nth-child(4) { animation-delay: 0.15s; }
-.list li:nth-child(5) { animation-delay: 0.19s; }
-.list li:nth-child(6) { animation-delay: 0.23s; }
-.list li:nth-child(7) { animation-delay: 0.27s; }
-.list li:nth-child(8) { animation-delay: 0.31s; }
-
-/* Table rows stagger */
+/* Lists, table rows and checklist rows: no entrance animation (re-triggered
+   on filter typing/pagination). Skip offscreen rows for cheaper long tables. */
 .table tbody tr {
-  animation: fadeIn 0.3s ease both;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 56px;
 }
-
-.table tbody tr:nth-child(1) { animation-delay: 0.02s; }
-.table tbody tr:nth-child(2) { animation-delay: 0.05s; }
-.table tbody tr:nth-child(3) { animation-delay: 0.08s; }
-.table tbody tr:nth-child(4) { animation-delay: 0.11s; }
-.table tbody tr:nth-child(5) { animation-delay: 0.14s; }
-.table tbody tr:nth-child(6) { animation-delay: 0.17s; }
-.table tbody tr:nth-child(7) { animation-delay: 0.2s; }
-.table tbody tr:nth-child(8) { animation-delay: 0.23s; }
 
 /* Spinner */
 .spinner {
@@ -1721,14 +1703,15 @@ h3 {
   width: 60%;
 }
 
-/* Form message slide-in */
+/* Form message / action error: feedback elements keep a quick entrance so
+   validation results are noticeable without feeling late. */
 .form-message {
-  animation: fadeInUp 0.3s ease;
+  animation: fadeIn 0.2s ease;
 }
 
 /* Action error shake */
 .action-error {
-  animation: fadeInUp 0.3s ease;
+  animation: fadeIn 0.2s ease;
 }
 
 /* Status pill active pulse */
@@ -1738,33 +1721,24 @@ h3 {
 
 /* Smart review panel entrance */
 .smart-review {
-  animation: scaleIn 0.4s ease;
+  animation: scaleIn 0.25s ease;
 }
 
 /* Suggestion box */
 .suggestion-box {
-  animation: fadeIn 0.5s ease 0.2s both;
+  animation: fadeIn 0.25s ease;
 }
 
-/* Checklist rows stagger */
-.check-row {
-  animation: slideInLeft 0.3s ease both;
-}
-
-.check-row:nth-child(1) { animation-delay: 0.04s; }
-.check-row:nth-child(2) { animation-delay: 0.08s; }
-.check-row:nth-child(3) { animation-delay: 0.12s; }
-.check-row:nth-child(4) { animation-delay: 0.16s; }
-.check-row:nth-child(5) { animation-delay: 0.2s; }
+/* Checklist rows: no entrance animation (re-triggered on every check toggle) */
 
 /* Login card */
 .login-card {
-  animation: scaleIn 0.5s ease;
+  animation: scaleIn 0.25s ease;
 }
 
 /* Notice banner */
 .notice {
-  animation: fadeInUp 0.35s ease;
+  animation: fadeInUp 0.25s ease;
 }
 
 /* Reduced motion — disable all animations */
@@ -3956,6 +3930,24 @@ textarea:focus-visible,
   opacity: 0.5;
   flex-shrink: 0;
 }
+.inapp-changes {
+  margin: 4px 0 2px;
+  padding: 6px 8px 6px 24px;
+  border-left: 2px solid var(--amber);
+  background: var(--panel-soft);
+  border-radius: 0 8px 8px 0;
+  list-style: disc;
+  font-size: 0.75rem;
+  color: var(--text);
+  white-space: normal;
+}
+.inapp-changes li + li {
+  margin-top: 2px;
+}
+.inapp-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 .inapp-badge {
   display: inline-flex;
   align-items: center;
@@ -5183,6 +5175,94 @@ body {
   margin: 0;
   border-radius: 14px;
   background: rgba(252, 254, 253, 0.78);
+}
+
+/* Tab bar that keeps the dashboard's heavy analytics panels collapsed. */
+.analytics-tabs {
+  display: grid;
+  gap: 14px;
+}
+
+.analytics-tab-bar {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(252, 254, 253, 0.9);
+}
+
+.analytics-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.analytics-tab:hover {
+  background: #eef5f2;
+  color: #294d47;
+}
+
+.analytics-tab.active {
+  background: #315b54;
+  color: #fff;
+}
+
+.analytics-tab-badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  background: #e8efec;
+  color: #41645d;
+}
+
+.analytics-tab-badge.red {
+  background: #fde8e7;
+  color: #a83d37;
+}
+
+.analytics-tab-badge.amber {
+  background: #fdf1d7;
+  color: #a76112;
+}
+
+.analytics-tab-badge.green {
+  background: #e6f4ec;
+  color: #1f6b4c;
+}
+
+.analytics-tab-badge.blue {
+  background: #e8eef4;
+  color: #2f617f;
+}
+
+.analytics-tab.active .analytics-tab-badge {
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+}
+
+@media (max-width: 640px) {
+  .analytics-tab {
+    flex: 1 1 auto;
+    justify-content: center;
+    padding: 7px 10px;
+    font-size: 12px;
+  }
 }
 
 /* Report cards and charts follow the same calm, card-first dashboard language. */

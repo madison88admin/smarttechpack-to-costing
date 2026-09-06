@@ -113,6 +113,8 @@ describe("getSavedComparisonSetByToken", () => {
     });
 
     const query = calls.find((c) => c.table === "saved_comparison_sets" && c.terminal === "maybeSingle");
+    // The token reaches the filter unquoted (verified: this server compares
+    // quoted values literally, so quoting would silently never match).
     expect(query?.chain.eq).toEqual([["share_token", row.share_token]]);
   });
 
@@ -135,6 +137,7 @@ describe("listSavedComparisonSetsForRequest", () => {
     expect(sets[0].name).toContain("SS27");
 
     const query = calls.find((c) => c.table === "saved_comparison_sets" && c.terminal === "select");
+    // The id reaches the filter unquoted (quoting would silently never match).
     expect(query?.chain.eq).toEqual([["request_id", "req-1"]]);
     expect(query?.chain.order).toEqual([["created_at", { ascending: false }]]);
   });

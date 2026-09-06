@@ -23,7 +23,6 @@ describe("slaKeyFor", () => {
     expect(slaKeyFor("for_md_review")).toBe("mdReview");
     expect(slaKeyFor("for_costing_review")).toBe("costingReview");
     expect(slaKeyFor("for_pbd_review")).toBe("pbdApproval");
-    expect(slaKeyFor("pending_manager_approval")).toBe("");
     expect(slaKeyFor("approved")).toBe("");
   });
 });
@@ -46,11 +45,6 @@ describe("getSlaHours / getSlaDays", () => {
     expect(getSlaHours("sent_to_factory", settings)).toBe(36);
     expect(getSlaHours("needs_clarification", settings)).toBe(36);
     expect(getSlaHours("for_pbd_review", settings)).toBe(24);
-  });
-
-  it("falls back to the day-based approval SLA for pending_manager_approval", () => {
-    expect(getSlaHours("pending_manager_approval", settings)).toBeNull();
-    expect(getSlaDays("pending_manager_approval", settings)).toBe(settings.approvalSlaDays);
   });
 
   it("returns null for statuses without an SLA (approved/rejected)", () => {

@@ -3,6 +3,7 @@ import { createCostingRequest, listCostingRequests } from "@/lib/costing/request
 import { badRequest } from "@/lib/api/response";
 import { canCreateRequest, getCurrentRole } from "@/lib/auth/roles";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { pgrestValue } from "@/lib/supabase/filters";
 import { validateBody, createRequestSchema } from "@/lib/api/validate";
 
 export async function GET(request: Request) {
@@ -74,7 +75,7 @@ export async function POST(request: Request) {
   const { data: existing } = await supabase
     .from("costing_requests")
     .select("id, request_number, status, factory_name")
-    .eq("nextgen_products.style_number", validated.styleNumber)
+    .eq("nextgen_products.style_number", pgrestValue(validated.styleNumber))
     .not("status", "in", '("approved","rejected")')
     .order("created_at", { ascending: false })
     .limit(5);

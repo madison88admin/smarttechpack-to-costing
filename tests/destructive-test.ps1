@@ -231,8 +231,7 @@ Write-Section "SMOKE TESTS - Workflow actions"
 if ($smokeId) {
   # Workflow: draft -> send_to_factory -> (factory submits CBD) -> for_md_review
   #          -> md_review (pass) -> for_costing_review -> costing_complete
-  #          -> for_pbd_review -> approve -> pending_manager_approval
-  #          -> manager_approve -> approved
+  #          -> for_pbd_review -> approve -> approved
 
   # send_to_factory as pbd (from draft)
   $r = Api "POST" "/api/costing/requests/$smokeId/actions" @{ action = "send_to_factory"; comment = "send" } $pbdS
@@ -273,8 +272,8 @@ if ($smokeId) {
   } $pbdS
   Expect "PBD enter pricing (smoke)" $r 200 $true
 
-  # approve as pbd (from for_pbd_review -> approved; below threshold skips
-  # pending_manager_approval and lands straight on approved)
+  # approve as pbd (from for_pbd_review -> approved in one decision; the
+  # Manager stage was folded into PBD)
   $r = Api "POST" "/api/costing/requests/$smokeId/actions" @{ action = "approve"; comment = "smoke approve" } $pbdS
   Expect "PBD approve (smoke)" $r 200 $true
 }

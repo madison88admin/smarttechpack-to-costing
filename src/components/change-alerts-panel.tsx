@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { IconAlertCircle, IconCheckCircle, IconClock, IconX } from "@/components/ui/icons";
+import { dispatchNotifSync, subscribeNotifSync } from "@/lib/notifications/sync";
 
 type InAppAlert = {
   id: string;
@@ -11,6 +12,7 @@ type InAppAlert = {
   alertType: string;
   title: string;
   body: string | null;
+  payload: { changes?: string[] } | null;
   createdAt: string;
   requestNumber: string | null;
   factoryName: string | null;
@@ -50,7 +52,13 @@ export function ChangeAlertsPanel() {
   useEffect(() => {
     load();
     const interval = setInterval(load, 60_000);
-    return () => clearInterval(interval);
+    // The bell dismisses receipts for the same requests — refetch so the panel
+    // empties the moment a bell item is dismissed, not up to 60s later.
+    const unsubscribe = subscribeNotifSync(window, load);
+    return () => {
+      clearInterval(interval);
+      unsubscribe();
+    };
   }, [load]);
 
   async function markAllRead() {
@@ -63,6 +71,9 @@ export function ChangeAlertsPanel() {
         body: JSON.stringify({})
       });
       setAlerts([]);
+      // Mark all read also clears the derived bell receipts server-side — tell
+      // the bell to reload instead of waiting for its 60s poll.
+      dispatchNotifSync(window);
       router.refresh();
     } catch {
       // Silent
@@ -112,6 +123,18 @@ export function ChangeAlertsPanel() {
                     {alert.requestNumber ?? "Request"} · {alert.factoryName ?? "Unassigned"}
                     {alert.status ? ` · ${alert.status.replace(/_/g, " ")}` : ""}
                   </span>
+                  {Array.isArray(alert.payload?.changes) && alert.payload.changes.length > 0 ? (
+                    <ul className="inapp-changes">
+                      {alert.payload.changes.slice(0, 5).map((change, index) => (
+                        <li key={index}>{change}</li>
+                      ))}
+                      {alert.payload.changes.length > 5 ? (
+                        <li className="eyebrow">…and {alert.payload.changes.length - 5} more — open the request</li>
+                      ) : null}
+                    </ul>
+                  ) : alert.body ? (
+                    <small className="inapp-body">{alert.body}</small>
+                  ) : null}
                   <small>
                     {label} · {new Date(alert.createdAt).toLocaleString()}
                   </small>

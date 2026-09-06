@@ -26,7 +26,6 @@ const STATUS_CHART_COLORS: Record<string, string> = {
   for_md_review: "#0d9488",
   for_costing_review: "#6366f1",
   for_pbd_review: "#8b5cf6",
-  pending_manager_approval: "#d946ef",
   approved: "#16a34a",
   rejected: "#dc2626"
 };
@@ -246,7 +245,7 @@ export default async function ReportsPage({
         approvalRate: r.trend.map((row) => (row.created > 0 ? Math.round((row.approved / row.created) * 1000) / 10 : 0)),
         avgCost: costTrend.map((row) => row.avgCost ?? 0),
         active: countByBucket(r.rows, granularity, (row) => !["approved", "rejected"].includes(row.status)),
-        inReview: countByBucket(r.rows, granularity, (row) => ["for_md_review", "for_costing_review", "for_pbd_review", "pending_manager_approval"].includes(row.status)),
+        inReview: countByBucket(r.rows, granularity, (row) => ["for_md_review", "for_costing_review", "for_pbd_review"].includes(row.status)),
         clarification: countByBucket(r.rows, granularity, (row) => row.status === "needs_clarification"),
         rejected: countByBucket(r.rows, granularity, (row) => row.status === "rejected")
       }

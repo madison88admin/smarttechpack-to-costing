@@ -209,7 +209,6 @@ function quickActionLabel(request: CostingRequestSummary, role: string) {
   if (role === "costing" && request.status === "for_costing_review") return "Validate";
   if (role === "md" && request.status === "for_md_review") return "MD Review";
   if ((role === "pbd" || role === "manager" || role === "admin") && request.status === "for_pbd_review") return "Review";
-  if (role === "manager" && request.status === "pending_manager_approval") return "Approve";
   return "Open";
 }
 

@@ -170,7 +170,9 @@ create table if not exists tp_costing.factory_cbds (
   id uuid primary key default gen_random_uuid(),
   costing_request_id uuid not null references tp_costing.costing_requests(id) on delete cascade,
   submitted_by uuid,
-  submitted_at timestamptz,
+  -- Stamped by DEFAULT now() on submit (the app omits the column); drafts
+  -- insert explicit null. Single DB clock source for the outlier-ack check.
+  submitted_at timestamptz default now(),
   status text not null default 'draft',
   raw_payload jsonb not null default '{}'::jsonb
 );
@@ -470,6 +472,18 @@ create index if not exists in_app_alerts_request_idx
 alter table tp_costing.in_app_alerts enable row level security;
 revoke all on table tp_costing.in_app_alerts from anon, authenticated;
 grant all on table tp_costing.in_app_alerts to service_role;
+
+-- Notification read receipts (migration 013)
+create table if not exists tp_costing.notification_reads (
+  recipient_role text not null,
+  notification_key text not null,
+  read_at timestamptz not null default now(),
+  constraint notification_reads_pkey primary key (recipient_role, notification_key)
+);
+
+alter table tp_costing.notification_reads enable row level security;
+revoke all on table tp_costing.notification_reads from anon, authenticated;
+grant all on table tp_costing.notification_reads to service_role;
 
 -- NextGen-synced historical records are flagged with source = 'nextgen' so
 -- re-syncs can dedup and benchmarks can exclude dropped/archived products.

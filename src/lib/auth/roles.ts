@@ -14,7 +14,7 @@ const roleLabels: Record<UserRole, string> = {
   viewer: "Viewer"
 };
 
-const allRoles: UserRole[] = ["superadmin", "admin", "manager", "pbd", "costing", "factory", "md", "viewer"];
+export const allRoles: UserRole[] = ["superadmin", "admin", "manager", "pbd", "costing", "factory", "md", "viewer"];
 
 export function getCurrentRole(): UserRole {
   const role = getCurrentIdentity()?.role;
@@ -124,7 +124,9 @@ export function canManageUsers(role: UserRole) {
 // centralized so pages and download endpoints enforce the same boundary as
 // the sidebar instead of relying on hidden navigation links.
 export function canAccessInternalCostData(role: UserRole) {
-  return ["superadmin", "admin", "manager", "pbd", "costing", "md", "viewer"].includes(role);
+  // Every role except Factory — derived from allRoles so a new role inherits
+  // the boundary (Factory is the only role that must never see internal costs).
+  return (allRoles.filter((r) => r !== "factory") as UserRole[]).includes(role);
 }
 
 // Super Admin only — system maintenance (sync, import, escalation triggers)

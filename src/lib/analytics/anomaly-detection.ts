@@ -1,4 +1,5 @@
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { pgrestValue } from "@/lib/supabase/filters";
 
 export type AnomalyAlert = {
   id: string;
@@ -57,7 +58,7 @@ export async function detectAnomalies(): Promise<{ alerts: AnomalyAlert[]; check
     const { data: historical } = await supabase
       .from("historical_costings")
       .select("total_cost, currency")
-      .ilike("style_number", styleNumber)
+      .ilike("style_number", pgrestValue(styleNumber))
       .neq("costing_request_id", cbd.costing_request_id)
       .limit(10);
 

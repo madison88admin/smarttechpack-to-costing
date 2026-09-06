@@ -13,6 +13,8 @@ tsconfig.tsbuildinfo
 
 # Local debug / scratch artifacts (not part of the product)
 dev-server*.log
+dev-live-*.log
+prod-server-*.log
 test-page.html
 imagewindow.html
 refetch-output.txt
@@ -20,3 +22,9 @@ test-product-image.png
 img-*.jpg
 tmp/
 tests/test-results.log
+.freebuff/
+diagram-preview/
+
+# Live session cookies / minted auth tokens — never commit
+cookies-*.txt
+*-cookie.txt

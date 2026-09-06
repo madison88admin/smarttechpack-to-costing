@@ -32,9 +32,12 @@ function isSameOrigin(request: NextRequest) {
 }
 
 function isFactoryAllowedPath(pathname: string) {
-  if (pathname === "/" || pathname.startsWith("/factory/") || pathname === "/factory") return true;
+  // /requests (exact) shows factory users their own assigned requests — the
+  // page scopes rows to the caller's assignment. Detail pages stay on the
+  // /factory/[id] CBD wizard, so /requests/* is not opened up.
+  if (pathname === "/" || pathname === "/requests" || pathname.startsWith("/factory/") || pathname === "/factory") return true;
   if (/^\/requests\/[0-9a-f-]+$/i.test(pathname)) return true;
-  if (pathname === "/api/auth/logout" || pathname === "/api/notifications/pending" || pathname === "/api/costing/import") return true;
+  if (pathname === "/api/auth/logout" || pathname === "/api/notifications/pending" || pathname === "/api/notifications/read" || pathname === "/api/costing/import") return true;
   if (/^\/api\/costing\/requests\/[0-9a-f-]+\/cbd$/i.test(pathname)) return true;
   if (/^\/api\/product\/[^/]+\/image$/i.test(pathname)) return true;
   return false;

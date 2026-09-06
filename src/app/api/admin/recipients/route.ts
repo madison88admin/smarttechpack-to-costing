@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { canAccessAdmin, getCurrentRole } from "@/lib/auth/roles";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { pgrestValue } from "@/lib/supabase/filters";
 
 // GET /api/admin/recipients — list all notification recipients
 export async function GET() {
@@ -76,7 +77,7 @@ export async function PUT(request: Request) {
   const { error } = await supabase
     .from("notification_recipients")
     .update(updates)
-    .eq("id", String(body.id));
+    .eq("id", pgrestValue(String(body.id)));
 
   if (error) {
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
@@ -101,7 +102,7 @@ export async function DELETE(request: Request) {
   const { error } = await supabase
     .from("notification_recipients")
     .delete()
-    .eq("id", id);
+    .eq("id", pgrestValue(id));
 
   if (error) {
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });

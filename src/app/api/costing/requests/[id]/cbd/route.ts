@@ -111,15 +111,25 @@ export async function POST(request: Request, context: { params: { id: string } }
 
     return NextResponse.json({ ok: true, data }, { status: 201 });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unable to save CBD";
+    // supabase-js throws plain error objects (not Error instances) — read
+    // their .message the same way the actions route does, so real failures
+    // (FK violations, PGRST116 not-found) are never masked as a generic 500.
+    const message =
+      error instanceof Error
+        ? error.message
+        : (error as { message?: string })?.message || "Unable to save CBD";
     // 409 = the request is not in a submittable status (transition gate) or a
     // concurrent submit won the optimistic lock — the client should refresh.
+    // 404 = the request id is well-formed but does not exist in the database
+    // (PostgREST PGRST116 raised by the .single() request lookup).
     const status =
       message.includes("not allowed from status") ||
       message.includes("cannot submit CBD from status") ||
       message.includes("request status changed")
         ? 409
-        : 500;
+        : message.includes("JSON object requested") || message.includes("single JSON object")
+          ? 404
+          : 500;
     return NextResponse.json({ ok: false, error: message }, { status });
   }
 }

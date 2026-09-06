@@ -2,7 +2,7 @@ import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { getWorkflowSettings } from "@/lib/admin/settings";
 import { calendarDaysSince, formatSlaDuration, getSlaDays, getSlaHours, hoursSince } from "@/lib/workflow/sla";
 import { enqueueNotificationsForPendingEvents } from "@/lib/notifications/queue";
-import { internalReviewStatuses } from "@/lib/workflow/status";
+import { activeStatuses, internalReviewStatuses } from "@/lib/workflow/status";
 
 type RequestRow = {
   id: string;
@@ -20,8 +20,6 @@ type EscalationResult = {
   remindedRequestIds: string[];
 };
 
-const ACTIVE_STATUSES = ["draft", "sent_to_factory", "for_md_review", "for_costing_review", "for_pbd_review", "needs_clarification", "pending_manager_approval"];
-
 // Default reminder/escalation thresholds (days since last status change)
 // SLA is hours-based: FTY=36h, Costing=24h, PBD=24h
 // Reminder at 80% of SLA, escalation at 100% of SLA
@@ -38,7 +36,7 @@ export async function processEscalations(): Promise<EscalationResult> {
   const { data: requests, error } = await supabase
     .from("costing_requests")
     .select("id, request_number, status, factory_name, updated_at, created_at")
-    .in("status", ACTIVE_STATUSES)
+    .in("status", activeStatuses)
     .order("updated_at", { ascending: true })
     .limit(200);
 
@@ -55,7 +53,7 @@ export async function processEscalations(): Promise<EscalationResult> {
   for (const request of typedRequests) {
     const hoursInStatus = hoursSince(request.updated_at);
     // Hours-based SLA takes precedence; statuses without one fall back to the
-    // legacy day-based SLA (pending_manager_approval → approvalSlaDays).
+    // day-based SLA.
     const slaHours =
       getSlaHours(request.status, settings) ??
       (getSlaDays(request.status, settings) ?? 0) * 24;

@@ -12,7 +12,6 @@ const NON_SUBMIT_STATUSES = [
   "for_md_review",
   "for_costing_review",
   "for_pbd_review",
-  "pending_manager_approval",
   "approved",
   "rejected"
 ];

@@ -26,7 +26,7 @@ export function RequestProgressStepper({
   role?: string;
 }) {
   const internalApproved = status === "approved";
-  const approvalActive = status === "for_pbd_review" || status === "pending_manager_approval";
+  const approvalActive = status === "for_pbd_review";
   const customerClosed = customerStatus === "closed";
   const customerActive = !customerClosed && (internalApproved || customerStatus === "customer_rejected_revised");
 
@@ -56,7 +56,7 @@ export function RequestProgressStepper({
 
   const steps: Step[] = [
     { id: "nextgen", label: "NextGen", detail: "Product + BOM", state: hasProduct ? "done" : "current" },
-    { id: "factory", label: "Factory CBD", detail: "Cost submission", state: hasCbd || ["for_md_review", "for_costing_review", "for_pbd_review", "pending_manager_approval", "approved", "rejected"].includes(status) ? "done" : ["sent_to_factory", "needs_clarification"].includes(status) ? "current" : "pending" },
+    { id: "factory", label: "Factory CBD", detail: "Cost submission", state: hasCbd || ["for_md_review", "for_costing_review", "for_pbd_review", "approved", "rejected"].includes(status) ? "done" : ["sent_to_factory", "needs_clarification"].includes(status) ? "current" : "pending" },
     // Review steps are completed only by their immutable audit actions. Do not
     // infer completion from a later status because legacy/imported records can
     // contain an inconsistent status and must remain visibly blocked.

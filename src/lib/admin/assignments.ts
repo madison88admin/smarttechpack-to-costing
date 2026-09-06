@@ -1,4 +1,5 @@
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { pgrestValue } from "@/lib/supabase/filters";
 import { recordWorkflowEvent } from "@/lib/workflow/events";
 
 export type FactoryAssignmentUser = {
@@ -69,7 +70,7 @@ export async function assignFactoryUser(
   const { data: request, error: requestError } = await supabase
     .from("costing_requests")
     .select("id,assigned_factory_user_id")
-    .eq("id", requestId)
+    .eq("id", pgrestValue(requestId))
     .single();
   if (requestError || !request) throw requestError ?? new Error("Request not found");
 
@@ -78,7 +79,7 @@ export async function assignFactoryUser(
     const { data, error } = await supabase
       .from("user_profiles")
       .select("id,display_name,email,role,is_active")
-      .eq("id", factoryUserId)
+      .eq("id", pgrestValue(factoryUserId))
       .eq("role", "factory")
       .eq("is_active", true)
       .single();
@@ -89,7 +90,7 @@ export async function assignFactoryUser(
   const { error: updateError } = await supabase
     .from("costing_requests")
     .update({ assigned_factory_user_id: factoryUserId, updated_at: new Date().toISOString() })
-    .eq("id", requestId);
+    .eq("id", pgrestValue(requestId));
   if (updateError) throw updateError;
 
   await recordWorkflowEvent(supabase, {
@@ -114,7 +115,7 @@ export async function resolveFactoryProfileId(identityId: string | null) {
   const byProfileId = await supabase
     .from("user_profiles")
     .select("id")
-    .eq("id", identityId)
+    .eq("id", pgrestValue(identityId))
     .eq("role", "factory")
     .eq("is_active", true)
     .maybeSingle();
@@ -123,7 +124,7 @@ export async function resolveFactoryProfileId(identityId: string | null) {
   const byAuthId = await supabase
     .from("user_profiles")
     .select("id")
-    .eq("auth_user_id", identityId)
+    .eq("auth_user_id", pgrestValue(identityId))
     .eq("role", "factory")
     .eq("is_active", true)
     .maybeSingle();
@@ -137,8 +138,8 @@ export async function factoryOwnsRequest(identityId: string | null, requestId: s
   const { data } = await supabase
     .from("costing_requests")
     .select("id")
-    .eq("id", requestId)
-    .eq("assigned_factory_user_id", profileId)
+    .eq("id", pgrestValue(requestId))
+    .eq("assigned_factory_user_id", pgrestValue(profileId))
     .maybeSingle();
   return Boolean(data?.id);
 }

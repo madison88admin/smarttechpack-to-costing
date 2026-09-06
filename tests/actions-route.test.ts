@@ -165,6 +165,76 @@ describe("POST /actions — optimistic-lock races return 409", () => {
   });
 });
 
+describe("POST /actions — outlier gate returns 409, not 500", () => {
+  it("maps the high-risk outlier block to 409 so the UI treats it as resolvable", async () => {
+    // Computed FOB 13 (line costs) vs historical average 10 → 30% variance,
+    // high risk, no Costing acknowledgement → the gate blocks before mutation.
+    const historical = {
+      id: "h1",
+      costing_request_id: "other-req",
+      style_number: "M88-OLD",
+      factory_name: "Cebu Factory",
+      total_cost: 10,
+      currency: "USD",
+      approved_at: "2025-01-10T00:00:00Z",
+      yarn_type: "100% Acrylic",
+      knit_type: "Jacquard",
+      machine_type: "7G",
+      construction: "Rib",
+      product_category: "Hats",
+      average_consumption: 0.2,
+      knitting_time: 0.45,
+      benchmark_excluded: false
+    };
+    const { client, calls } = createMockSupabase(
+      approveResponder({
+        factory_cbds: {
+          maybeSingle: () => ({
+            data: {
+              id: "cbd-1",
+              submitted_at: "2026-08-10T00:00:00Z",
+              raw_payload: {
+                grandTotal: 10,
+                landedCost: 0,
+                currency: "USD",
+                yarnType: "100% Acrylic",
+                knitType: "Jacquard",
+                machineType: "7G",
+                knittingTime: 0.45
+              },
+              cbd_material_lines: [{ consumption: 0.2, total_cost: 13, currency: "USD", material_name: "Yarn" }]
+            },
+            error: null
+          })
+        },
+        historical_costings: {
+          select: () => ({ data: [historical], error: null })
+        },
+        approval_actions: {
+          maybeSingle: (chain) => {
+            const ackQuery = chain.eq?.some(([col, val]) => col === "action" && val === "outlier_acknowledged");
+            if (ackQuery) return { data: null, error: null }; // never acknowledged
+            return { data: { metadata: { decision: "pass" } }, error: null };
+          },
+          insert: () => ({ data: [], error: null })
+        }
+      })
+    );
+    mocks.client = client;
+
+    const res = await POST(request({ action: "approve" }), { params: { id: REQUEST_ID } });
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.ok).toBe(false);
+    expect(body.error).toContain("high-risk outlier");
+    // The gate halts before any mutation: no status update, no audit, no history.
+    expect(inserts(calls, "approval_actions")).toHaveLength(0);
+    expect(inserts(calls, "workflow_events")).toHaveLength(0);
+    expect(inserts(calls, "historical_costings")).toHaveLength(0);
+  });
+});
+
 describe("POST /actions — status mapping guards", () => {
   it("still maps a transition-gate error to 409", async () => {
     // Request is in draft — approve is not allowed from draft, a different 409 path.

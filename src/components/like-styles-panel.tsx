@@ -7,7 +7,13 @@ import type { HistoricalCostingRow, LikeStyleMatchInput } from "@/lib/costing/hi
 import type { SavedComparisonSet } from "@/lib/comparison-sets";
 import { CopyShareLink } from "@/components/copy-share-link";
 
-type ComparisonRow = HistoricalCostingRow & { matchScore: number; matchReasons?: string[] };
+type ComparisonRow = HistoricalCostingRow & {
+  matchScore: number;
+  matchReasons?: string[];
+  scorePercent?: number;
+  sampleSize?: number;
+  confidence?: "low" | "medium" | "high";
+};
 
 type Benchmark = { averageConsumption?: number | null; averageKnittingTime?: number | null; sampleSize?: number };
 
@@ -117,9 +123,20 @@ export function LikeStylesPanel({
           {rows.map((row) => (
             <li key={row.id}>
               <strong>{row.style_number ?? "No style"}</strong>
-              <span className="activity-role">{row.matchScore} match</span>
+              <span className="activity-role">{row.matchScore} match{row.scorePercent != null ? ` (${row.scorePercent}%)` : ""}</span>
+              {row.confidence ? (
+                <span className={`status ${row.confidence === "high" ? "green" : row.confidence === "medium" ? "amber" : "red"}`}>
+                  {row.confidence === "high" ? "High" : row.confidence === "medium" ? "Medium" : "Low"} confidence
+                </span>
+              ) : null}
               {row.matchReasons?.length ? <span className="eyebrow"> — {row.matchReasons.join(", ")}</span> : null}
               <br />
+              {row.sampleSize != null ? (
+                <>
+                  <span className="eyebrow">Based on {row.sampleSize} historical costing{row.sampleSize === 1 ? "" : "s"}</span>
+                  <br />
+                </>
+              ) : null}
               {row.factory_name ?? "Unassigned"} / {row.currency ?? "USD"} {row.total_cost?.toFixed(2) ?? "Pending"}
               {row.yarn_type || row.knit_type || row.machine_type ? (
                 <>

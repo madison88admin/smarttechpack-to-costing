@@ -116,11 +116,22 @@ export default async function ComparisonSetPage({ params }: { params: { token: s
                 {results.map((row, index) => (
                   <li key={String(row.id ?? index)}>
                     <strong>{String(row.style_number ?? "No style")}</strong>
-                    <span className="activity-role">{Number(row.matchScore ?? 0)} match</span>
+                    <span className="activity-role">{Number(row.matchScore ?? 0)} match{row.scorePercent != null ? ` (${Number(row.scorePercent)}%)` : ""}</span>
+                    {row.confidence ? (
+                      <span className={`status ${row.confidence === "high" ? "green" : row.confidence === "medium" ? "amber" : "red"}`}>
+                        {row.confidence === "high" ? "High" : row.confidence === "medium" ? "Medium" : "Low"} confidence
+                      </span>
+                    ) : null}
                     {Array.isArray(row.matchReasons) && row.matchReasons.length ? (
                       <span className="eyebrow"> — {row.matchReasons.join(", ")}</span>
                     ) : null}
                     <br />
+                    {row.sampleSize != null ? (
+                      <>
+                        <span className="eyebrow">Based on {Number(row.sampleSize)} historical costing{Number(row.sampleSize) === 1 ? "" : "s"}</span>
+                        <br />
+                      </>
+                    ) : null}
                     {String(row.factory_name ?? "Unassigned")} / {String(row.currency ?? "USD")}{" "}
                     {row.total_cost != null ? Number(row.total_cost).toFixed(2) : "Pending"}
                     {row.yarn_type || row.knit_type || row.machine_type ? (

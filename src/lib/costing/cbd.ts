@@ -4,7 +4,7 @@ import { defaultWorkflowSettings, getWorkflowSettings } from "@/lib/admin/settin
 import { getBenchmarkSummary } from "./history";
 import { calculateCostingTotals } from "./totals";
 import { hasBlockingIssues, validateBenchmarkVariance, validateFactoryCbd, type ValidationIssue } from "./validation";
-import { getCbdDiff } from "./cbd-diff";
+import { CBD_DIFF_FIELD_LABELS, getCbdDiff } from "./cbd-diff";
 import { bomChangedAlertBody, enqueueCostingChangeAlert, enqueueRoleChangeAlert } from "@/lib/notifications/workflow-alerts";
 import type { CostingStatus } from "@/lib/workflow/status";
 
@@ -150,9 +150,14 @@ export async function submitFactoryCbd(input: SubmitCbdInput) {
   const supabase = createSupabaseServiceClient();
   const status = input.status === "submitted" ? "submitted" : "draft";
 
+  // Always verify the request exists BEFORE inserting anything. The .single()
+  // lookup throws PostgREST PGRST116 when the id does not exist, which the
+  // route maps to a clean 404 instead of a foreign-key-violation 500. Draft
+  // saves are still allowed from any status — only submissions are gated.
+  const context = await getRequestContext(supabase, input.costingRequestId);
+
   // Pre-check: if submitting, verify the request is in an allowed status BEFORE inserting
   if (status === "submitted") {
-    const context = await getRequestContext(supabase, input.costingRequestId);
     const submitError = assertSubmitAllowedFrom(context.status);
     if (submitError) throw new Error(submitError);
   }
@@ -211,7 +216,12 @@ export async function submitFactoryCbd(input: SubmitCbdInput) {
     .insert({
       costing_request_id: input.costingRequestId,
       submitted_by: input.submittedBy ?? null,
-      submitted_at: status === "submitted" ? new Date().toISOString() : null,
+      // submitted_at is stamped by the database (DEFAULT now(), migration
+      // 015) so the outlier-acknowledgement freshness check compares DB-clock
+      // values on both sides. Never send an app-clock timestamp here — client
+      // clocks can run ahead of the database and make a fresh ack look stale.
+      // Drafts stay explicitly null (nothing submitted yet).
+      ...(status === "submitted" ? {} : { submitted_at: null }),
       status,
       raw_payload: {
         currency: input.currency,
@@ -313,8 +323,6 @@ export async function submitFactoryCbd(input: SubmitCbdInput) {
   }
 
   if (status === "submitted") {
-    const context = await getRequestContext(supabase, input.costingRequestId);
-
     const benchmark = await getBenchmarkSummary({
       styleNumber: context.styleNumber,
       factoryName: context.factoryName,
@@ -533,13 +541,23 @@ async function enqueueBomChangeAlertIfChanged(requestId: string, factoryName: st
   });
 
   const impact = diff.costImpacts[diff.costImpacts.length - 1];
+  // Per-field old → new lines so the alert shows exactly what the factory
+  // changed, not just the count. Entries already carry formatted values.
+  const changes = latestDiff
+    .filter((entry) => entry.changed)
+    .map((entry) => ({
+      field: CBD_DIFF_FIELD_LABELS[entry.field] ?? entry.field,
+      oldValue: entry.oldValue || "—",
+      newValue: entry.newValue || "—"
+    }));
   const { subject, body } = bomChangedAlertBody({
     requestNumber: diff.requestNumber,
     factoryName,
     changedCount,
     fobBefore: impact?.fobBefore ?? 0,
     fobAfter: impact?.fobAfter ?? 0,
-    currency: impact?.currency ?? "USD"
+    currency: impact?.currency ?? "USD",
+    changes
   });
 
   await enqueueCostingChangeAlert({
@@ -548,7 +566,8 @@ async function enqueueBomChangeAlertIfChanged(requestId: string, factoryName: st
     factoryName,
     subject,
     body,
-    kind: "bom_changed"
+    kind: "bom_changed",
+    changes: changes.map((change) => `${change.field}: ${change.oldValue} → ${change.newValue}`)
   });
 }
 

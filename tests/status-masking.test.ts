@@ -15,19 +15,13 @@ const ALL_STATUSES: CostingStatus[] = [
   "for_md_review",
   "for_costing_review",
   "for_pbd_review",
-  "pending_manager_approval",
   "approved",
   "rejected"
 ];
 
 describe("internalReviewStatuses", () => {
-  it("covers every MD/Costing/PBD/Manager internal stage", () => {
-    expect(internalReviewStatuses).toEqual([
-      "for_md_review",
-      "for_costing_review",
-      "for_pbd_review",
-      "pending_manager_approval"
-    ]);
+  it("covers every MD/Costing/PBD internal stage", () => {
+    expect(internalReviewStatuses).toEqual(["for_md_review", "for_costing_review", "for_pbd_review"]);
   });
 
   it("excludes factory-actionable and terminal statuses", () => {
@@ -89,7 +83,6 @@ describe("factory request-list visibility (getStatusesForRoles)", () => {
       "for_md_review",
       "for_costing_review",
       "for_pbd_review",
-      "pending_manager_approval",
       "approved"
     ]);
   });

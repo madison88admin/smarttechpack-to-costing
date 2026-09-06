@@ -19,6 +19,8 @@ type ChangeAlertInput = {
   subject: string;
   body: string;
   kind: ChangeAlertKind;
+  /** Pre-formatted "Field: old → new" lines, also stored on the in-app payload. */
+  changes?: string[];
 };
 
 async function resolveCostingRecipients(): Promise<string[]> {
@@ -81,13 +83,15 @@ export async function enqueueCostingChangeAlert(input: ChangeAlertInput): Promis
     }
 
     // Surface as an in-app alert on the dashboard for the costing team.
+    // Per-field old → new lines ride along in the payload so the panel can
+    // render exactly what changed without recomputing the diff.
     await recordInAppAlert({
       requestId: input.requestId,
       alertType: input.kind,
       recipientRole: "costing",
       title: input.subject,
       body: input.body,
-      payload: { kind: input.kind }
+      payload: input.changes?.length ? { kind: input.kind, changes: input.changes } : { kind: input.kind }
     });
 
     return enqueued;
@@ -97,6 +101,13 @@ export async function enqueueCostingChangeAlert(input: ChangeAlertInput): Promis
   }
 }
 
+/** A single changed field formatted as "Label: old → new" for alert bodies. */
+export type FieldChangeLine = {
+  field: string;
+  oldValue: string;
+  newValue: string;
+};
+
 /** Alert sent when a factory CBD resubmission changes BOM/material lines. */
 export function bomChangedAlertBody(input: {
   requestNumber: string | null;
@@ -105,10 +116,14 @@ export function bomChangedAlertBody(input: {
   fobBefore: number;
   fobAfter: number;
   currency: string;
+  /** Per-field old → new lines (newest submissions carry these; older callers omit). */
+  changes?: FieldChangeLine[];
 }): { subject: string; body: string } {
   const delta = input.fobAfter - input.fobBefore;
   const deltaPercent = input.fobBefore !== 0 ? (delta / Math.abs(input.fobBefore)) * 100 : 0;
   const direction = delta > 0 ? "+" : "";
+  const shown = (input.changes ?? []).slice(0, 8);
+  const hidden = (input.changes ?? []).length - shown.length;
   return {
     subject: `[${input.requestNumber ?? "Request"}] BOM / CBD changed by factory — ${input.changedCount} field(s)`,
     body: [
@@ -116,10 +131,24 @@ export function bomChangedAlertBody(input: {
       `Factory: ${input.factoryName ?? "Unassigned"}`,
       `Changed fields: ${input.changedCount}`,
       `FOB: ${input.currency} ${input.fobBefore.toFixed(2)} → ${input.currency} ${input.fobAfter.toFixed(2)} (${direction}${deltaPercent.toFixed(1)}%)`,
+      ...shown.map((change) => `• ${change.field}: ${change.oldValue} → ${change.newValue}`),
+      ...(hidden > 0 ? [`• …and ${hidden} more field(s) — open the request to see all`] : []),
       ``,
       `The factory resubmitted the CBD with material/cost changes. Please re-validate before approval.`
     ].join("\n")
   };
+}
+
+function priceOldNew(
+  before: number | null | undefined,
+  after: number | null,
+  currency: string
+): string {
+  const fmt = (value: number | null | undefined) =>
+    value === null || value === undefined ? "—" : `${currency} ${value.toFixed(2)}`;
+  // First-time pricing has no "before" — keep the original single-value line.
+  if (before === null || before === undefined) return fmt(after);
+  return `${fmt(before)} → ${fmt(after)}`;
 }
 
 /** Alert sent when PBD changes pricing on a request under internal review. */
@@ -130,6 +159,9 @@ export function pbdPricingAlertBody(input: {
   retailPrice: number | null;
   currency: string;
   changedBy: string | null;
+  /** Previous prices when this is a re-price (omitted on first pricing). */
+  wholesaleBefore?: number | null;
+  retailBefore?: number | null;
 }): { subject: string; body: string } {
   return {
     subject: `[${input.requestNumber ?? "Request"}] PBD updated costing pricing`,
@@ -137,8 +169,8 @@ export function pbdPricingAlertBody(input: {
       `Request: ${input.requestNumber ?? "Unknown"}`,
       `Factory: ${input.factoryName ?? "Unassigned"}`,
       `Updated by: ${input.changedBy ?? "PBD"}`,
-      `Wholesale price: ${input.wholesalePrice === null ? "—" : `${input.currency} ${input.wholesalePrice.toFixed(2)}`}`,
-      `Retail price: ${input.retailPrice === null ? "—" : `${input.currency} ${input.retailPrice.toFixed(2)}`}`,
+      `Wholesale price: ${priceOldNew(input.wholesaleBefore, input.wholesalePrice, input.currency)}`,
+      `Retail price: ${priceOldNew(input.retailBefore, input.retailPrice, input.currency)}`,
       ``,
       `PBD changed the costing pricing during internal review. Please review the updated figures.`
     ].join("\n")

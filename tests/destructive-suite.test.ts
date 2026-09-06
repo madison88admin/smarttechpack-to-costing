@@ -258,7 +258,6 @@ const ALL_STATUSES = [
   "for_md_review",
   "for_costing_review",
   "for_pbd_review",
-  "pending_manager_approval",
   "approved",
   "rejected"
 ];
@@ -268,13 +267,13 @@ const EXPECTED_VISIBILITY: Record<UserRole, string[]> = {
   admin: ALL_STATUSES,
   viewer: ALL_STATUSES, // read-only dashboards: sees everything
   pbd: ALL_STATUSES, // owns the request end-to-end
-  costing: ["for_md_review", "for_costing_review", "for_pbd_review", "needs_clarification", "pending_manager_approval", "approved", "rejected"],
+  costing: ["for_md_review", "for_costing_review", "for_pbd_review", "needs_clarification", "approved", "rejected"],
   factory: ["draft", "sent_to_factory", "needs_clarification", "rejected"],
-  manager: ["for_pbd_review", "pending_manager_approval", "approved", "rejected"],
+  manager: ["for_pbd_review", "approved", "rejected"],
   md: ["for_md_review", "for_costing_review", "for_pbd_review", "needs_clarification"]
 };
 
-describe("DESTRUCTIVE 4 — role visibility matrix (8 roles x 9 statuses)", () => {
+describe("DESTRUCTIVE 4 — role visibility matrix (8 roles x 8 statuses)", () => {
   it.each(ROLES)("%s sees exactly its documented status set", (role) => {
     const actual = getStatusesForRoles([role]).sort();
     expect(actual).toEqual([...EXPECTED_VISIBILITY[role]].sort());

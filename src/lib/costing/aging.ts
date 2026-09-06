@@ -1,6 +1,7 @@
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { getWorkflowSettings, type WorkflowSettings } from "@/lib/admin/settings";
 import { calendarDaysSince, getSlaDays } from "@/lib/workflow/sla";
+import { activeStatuses, type CostingStatus } from "@/lib/workflow/status";
 
 export type AgingBucket = "fresh" | "aging" | "overdue";
 
@@ -36,8 +37,9 @@ export type AgingSummary = {
 };
 
 // Draft has no SLA (PBD hasn't sent it yet) but still counts as an active
-// request in the aging summary; the rest are all tracked statuses.
-const ACTIVE_STATUSES = ["draft", "sent_to_factory", "for_md_review", "for_costing_review", "for_pbd_review", "needs_clarification", "pending_manager_approval"];
+// request in the aging summary; the rest are all tracked statuses. The active
+// set is owned by src/lib/workflow/status.ts.
+
 
 export async function getAgingData(): Promise<{ rows: AgingRow[]; settings: WorkflowSettings }> {
   const supabase = createSupabaseServiceClient();
@@ -95,7 +97,7 @@ export async function getAgingData(): Promise<{ rows: AgingRow[]; settings: Work
 }
 
 export function getAgingSummary(rows: AgingRow[]): AgingSummary {
-  const active = rows.filter((row) => ACTIVE_STATUSES.includes(row.status));
+  const active = rows.filter((row) => activeStatuses.includes(row.status as CostingStatus));
   const byStatus: Record<string, { count: number; overdue: number }> = {};
 
   for (const row of active) {
@@ -166,7 +168,6 @@ export function ownerRoleForStatus(status: string): string | null {
   switch (status) {
     case "draft":
     case "for_pbd_review":
-    case "pending_manager_approval":
       return "pbd";
     case "sent_to_factory":
     case "needs_clarification":

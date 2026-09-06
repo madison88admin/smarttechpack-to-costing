@@ -55,9 +55,13 @@ export function buildBomFilter(input: BomQueryInput, config: BomConfig = getBomC
   ][];
 
   for (const [inputKey, field] of entries) {
-    const value = input[inputKey]?.trim();
+    let value = input[inputKey]?.trim();
 
     if (!value) continue;
+
+    // Cap the term so an oversized value cannot blow up the upstream request
+    // or its response. No legitimate BOM query approaches this length.
+    value = value.slice(0, 200);
 
     if (field === config.filterField) {
       return `${field}~${config.filterOperator}~${escapeValue(value)}`;

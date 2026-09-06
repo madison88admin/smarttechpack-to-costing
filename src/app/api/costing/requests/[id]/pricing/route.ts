@@ -70,6 +70,17 @@ export async function POST(request: Request, context: { params: { id: string } }
   };
 
   const supabase = createSupabaseServiceClient();
+  // Read the previous pricing first so the change alert can show old → new
+  // instead of only the new figures. Best-effort: a missed read degrades to
+  // the original single-value lines.
+  const { data: previous } = await supabase
+    .from("costing_requests")
+    .select("pbd_pricing")
+    .eq("id", context.params.id)
+    .maybeSingle();
+  const prevPricing = (previous?.pbd_pricing ?? {}) as Record<string, unknown>;
+  const prevNumber = (value: unknown) =>
+    typeof value === "number" && Number.isFinite(value) ? value : null;
   const { data: updated, error } = await supabase
     .from("costing_requests")
     .update({
@@ -80,7 +91,7 @@ export async function POST(request: Request, context: { params: { id: string } }
       updated_at: now
     })
     .eq("id", context.params.id)
-    .in("status", ["for_pbd_review", "pending_manager_approval"])
+    .in("status", ["for_pbd_review"])
     .select("id,request_number,factory_name,pbd_pricing,pbd_pricing_status,pbd_pricing_updated_at")
     .maybeSingle();
 
@@ -109,7 +120,9 @@ export async function POST(request: Request, context: { params: { id: string } }
     wholesalePrice: wholesalePrice ?? null,
     retailPrice: retailPrice ?? null,
     currency: pricing.currency,
-    changedBy: getCurrentUserName()
+    changedBy: getCurrentUserName(),
+    wholesaleBefore: prevNumber(prevPricing.wholesalePrice),
+    retailBefore: prevNumber(prevPricing.retailPrice)
   });
   await enqueueCostingChangeAlert({
     requestId: context.params.id,

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { UserRole } from "@/lib/auth/roles";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { pgrestValue } from "@/lib/supabase/filters";
 import { verifyPassword } from "@/lib/auth/passwords";
 import { createSupabaseAuthClient, isSupabaseAuthEnabled } from "@/lib/auth/supabase-auth";
 import { checkRateLimit, getClientIp, RATE_LIMITS } from "@/lib/auth/rate-limit";
@@ -34,7 +35,7 @@ async function findProfileUser(username: string, password: string) {
   const { data, error } = await supabase
     .from("user_profiles")
     .select("id,display_name,email,role,is_active,password_hash")
-    .eq("email", username)
+    .eq("email", pgrestValue(username))
     .eq("is_active", true)
     .maybeSingle();
 
@@ -73,7 +74,7 @@ async function findSupabaseAuthUser(username: string, password: string) {
   const { data: profile } = await supabase
     .from("user_profiles")
     .select("id,display_name,email,role,is_active")
-    .eq("email", username)
+    .eq("email", pgrestValue(username))
     .eq("is_active", true)
     .maybeSingle();
 

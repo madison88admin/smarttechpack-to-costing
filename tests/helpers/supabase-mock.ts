@@ -18,6 +18,8 @@ export type Chain = {
   gt?: [string, unknown][];
   lt?: [string, unknown][];
   limit?: number;
+  range?: [number, number];
+  or?: string[];
   order?: [string, unknown][];
   payload?: unknown;
 };
@@ -92,6 +94,16 @@ class FakeBuilder {
 
   limit(n: number) {
     this.chain.limit = n;
+    return this;
+  }
+
+  range(start: number, end: number) {
+    this.chain.range = [start, end];
+    return this;
+  }
+
+  or(filter: string) {
+    (this.chain.or ??= []).push(filter);
     return this;
   }
 

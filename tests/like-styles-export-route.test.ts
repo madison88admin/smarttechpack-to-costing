@@ -38,6 +38,9 @@ function match(): LikeStyleMatch {
     average_consumption: 0.21,
     knitting_time: 0.45,
     matchScore: 8,
+    scorePercent: 100,
+    sampleSize: 10,
+    confidence: "high",
     matchReasons: ["Yarn +3"],
     matchingNotes: []
   };

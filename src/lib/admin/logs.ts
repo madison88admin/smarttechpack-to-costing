@@ -1,4 +1,5 @@
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { pgrestOrTerms, pgrestValue } from "@/lib/supabase/filters";
 
 export async function listSystemErrorLogs(opts?: {
   limit?: number;
@@ -17,12 +18,13 @@ export async function listSystemErrorLogs(opts?: {
     .range(offset, offset + limit - 1);
 
   if (opts?.severity && opts.severity !== "all") {
-    request = request.eq("severity", opts.severity);
+    request = request.eq("severity", pgrestValue(opts.severity));
   }
 
   if (opts?.query?.trim()) {
-    const q = opts.query.trim();
-    request = request.or(`message.ilike.%${q}%,source.ilike.%${q}%`);
+    // Quote the value so commas/spaces in the search term are literal instead
+    // of being parsed as PostgREST filter grammar (which errors or hangs).
+    request = request.or(pgrestOrTerms(["message", "source"], opts.query.trim()));
   }
 
   const { data, error, count } = await request;
@@ -48,12 +50,13 @@ export async function listAuditEvents(opts?: {
     .range(offset, offset + limit - 1);
 
   if (opts?.eventType && opts.eventType !== "all") {
-    request = request.eq("event_type", opts.eventType);
+    request = request.eq("event_type", pgrestValue(opts.eventType));
   }
 
   if (opts?.query?.trim()) {
-    const q = opts.query.trim();
-    request = request.or(`event_type.ilike.%${q}%,actor_role.ilike.%${q}%`);
+    // Quote the value so commas/spaces in the search term are literal instead
+    // of being parsed as PostgREST filter grammar (which errors or hangs).
+    request = request.or(pgrestOrTerms(["event_type", "actor_role"], opts.query.trim()));
   }
 
   const { data, error, count } = await request;

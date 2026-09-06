@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { canRunPbdAction, canRunCostingAction, getCurrentRole, getCurrentUserId, getCurrentUserName } from "@/lib/auth/roles";
-import { runCostingAction } from "@/lib/costing/actions";
+import { approvalGatedActions, costingGatedActions, runCostingAction } from "@/lib/costing/actions";
 import { badRequest } from "@/lib/api/response";
 import { validateBody, actionSchema, validateRequestId } from "@/lib/api/validate";
 
@@ -19,12 +19,11 @@ export async function POST(request: Request, context: { params: { id: string } }
   if (!validation.success) return validation.response;
   const { action, comment } = validation.data;
 
-  // Determine which role is required based on the action
-  const costingActions = ["costing_complete", "costing_clarify"];
-  const approvalActions = ["approve", "reject"];
+  // Determine which role is required based on the action. The action groups
+  // come from the canonical action module, not a local copy.
   const pbdActions = ["clarify"];
 
-  if (costingActions.includes(action)) {
+  if (costingGatedActions.includes(action)) {
     // Costing actions require Costing Team or Admin
     if (!canRunCostingAction(role)) {
       return NextResponse.json(
@@ -32,7 +31,7 @@ export async function POST(request: Request, context: { params: { id: string } }
         { status: 403 }
       );
     }
-  } else if (approvalActions.includes(action)) {
+  } else if (approvalGatedActions.includes(action)) {
     // Internal approval is one combined PBD-owned decision.
     if (!canRunPbdAction(role)) {
       return NextResponse.json(
@@ -71,6 +70,11 @@ export async function POST(request: Request, context: { params: { id: string } }
     if (message.includes("request status changed")) status = 409; // optimistic-lock race
     if (message.includes("requires Costing Team") || message.includes("requires PBD")) status = 403;
     if (message.includes("required checklist") || message.includes("selling price review") || message.includes("compliance is") || message.includes("MD technical review")) status = 409;
+    // High-risk outlier gate: resolvable by Costing acknowledgement, not a server error.
+    if (message.includes("outlier")) status = 409;
+    // Request id is well-formed but no such request exists (PostgREST PGRST116
+    // from .single(); message differs between supabase-js and the live proxy).
+    if (message.includes("JSON object requested") || message.includes("single JSON object")) status = 404;
     return NextResponse.json({ ok: false, error: message }, { status });
   }
 }

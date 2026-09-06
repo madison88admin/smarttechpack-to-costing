@@ -1,4 +1,5 @@
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { pgrestLike, pgrestValue } from "@/lib/supabase/filters";
 import { calculateCostingTotals } from "@/lib/costing/totals";
 import { nextGenPost, kendoSearchPayload, legacyKendoSearchPayload } from "@/lib/nextgen/client";
 import { normalizeProductSearch, normalizeBomLines } from "@/lib/nextgen/normalize";
@@ -481,7 +482,7 @@ async function getCostBreakdownData(supabase: ReturnType<typeof createSupabaseSe
   const { data: cbd } = await supabase
     .from("factory_cbds")
     .select("raw_payload, cbd_material_lines (total_cost, currency, material_name)")
-    .eq("costing_request_id", requestId)
+    .eq("costing_request_id", pgrestValue(requestId))
     .order("submitted_at", { ascending: false, nullsFirst: false })
     .order("id", { ascending: false })
     .limit(1)
@@ -495,7 +496,7 @@ async function getHistoricalData(supabase: ReturnType<typeof createSupabaseServi
   const { data } = await supabase
     .from("historical_costings")
     .select("total_cost, currency, factory_name, approved_at")
-    .ilike("style_number", `%${styleNumber}%`)
+    .ilike("style_number", pgrestLike(styleNumber))
     .order("approved_at", { ascending: false })
     .limit(10);
   const records: any[] = [];
@@ -524,7 +525,7 @@ async function getPendingRequestsData(supabase: ReturnType<typeof createSupabase
   const { data } = await supabase
     .from("costing_requests")
     .select("id, request_number, status, factory_name, updated_at")
-    .in("status", ["for_costing_review", "for_pbd_review", "needs_clarification", "pending_manager_approval", "sent_to_factory"])
+    .in("status", ["for_costing_review", "for_pbd_review", "needs_clarification", "sent_to_factory"])
     .order("updated_at", { ascending: true })
     .limit(10);
   const requests = (data ?? []).map((r: any) => ({
@@ -538,7 +539,7 @@ async function getMarginData(supabase: ReturnType<typeof createSupabaseServiceCl
   const { data: cbd } = await supabase
     .from("factory_cbds")
     .select("raw_payload")
-    .eq("costing_request_id", requestId)
+    .eq("costing_request_id", pgrestValue(requestId))
     .order("submitted_at", { ascending: false, nullsFirst: false })
     .limit(1)
     .maybeSingle();
@@ -564,7 +565,7 @@ async function getAnomalyData(supabase: ReturnType<typeof createSupabaseServiceC
       const { data: hist } = await supabase
         .from("historical_costings")
         .select("total_cost")
-        .ilike("style_number", `%${styleNumber}%`)
+        .ilike("style_number", pgrestLike(styleNumber))
         .limit(5);
       const histCosts = (hist ?? []).filter((h: any) => h.total_cost != null).map((h: any) => h.total_cost);
       if (histCosts.length >= 2) {

@@ -1,4 +1,5 @@
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { pgrestValue } from "@/lib/supabase/filters";
 import type { CostingStatus } from "@/lib/workflow/status";
 import { recordWorkflowEvent } from "@/lib/workflow/events";
 import { calculateCostingTotals } from "./totals";
@@ -19,7 +20,15 @@ const allowedActions: Record<string, CostingStatus> = {
   reject: "rejected"
 };
 
-const validTransitions: Record<string, string[]> = {
+// Role-gated action groups — single owner of the action vocabulary. Derived
+// from allowedActions so a new costing_* action or a new terminal-target
+// action inherits its gate without a second list to update.
+export const costingGatedActions = Object.keys(allowedActions).filter((a) => a.startsWith("costing_"));
+export const approvalGatedActions = Object.entries(allowedActions)
+  .filter(([, target]) => target === "approved" || target === "rejected")
+  .map(([action]) => action);
+
+export const validTransitions: Record<string, string[]> = {
   send_to_factory: ["draft"],
   // Factory submits CBD → MD technical review (workflow order: MD before Costing)
   submit: ["sent_to_factory", "needs_clarification"],
@@ -33,6 +42,10 @@ const validTransitions: Record<string, string[]> = {
   approve: ["for_pbd_review"],
   reject: ["for_pbd_review"]
 };
+
+/** Actions accepted by the PBD/Costing actions endpoint — the full vocabulary
+ * minus `submit`, which the factory CBD endpoint owns. */
+export const routeActionNames = Object.keys(validTransitions).filter((a) => a !== "submit");
 
 // --- Pure transition engine (no I/O) ----------------------------------------
 // These two functions are the unit-testable core of the workflow. They are
@@ -55,15 +68,13 @@ export function assertActionAllowed(action: string, actorRole?: string | null): 
     return "Invalid action";
   }
 
-  // Role enforcement: costing_complete and costing_clarify require Costing Team or Admin tier
-  const costingActions = ["costing_complete", "costing_clarify"];
-  if (costingActions.includes(action) && !canRunCostingAction(actorRole as UserRole)) {
+  // Role enforcement: costing_* actions require Costing Team or Admin tier.
+  if (costingGatedActions.includes(action) && !canRunCostingAction(actorRole as UserRole)) {
     return `Action "${action}" requires Costing Team or Admin role`;
   }
 
-  // Normal approval/rejection is owned by PBD.
-  const approvalActions = ["approve", "reject"];
-  if (approvalActions.includes(action) && !canRunPbdAction(actorRole as UserRole)) {
+  // Normal approval/rejection is owned by PBD (the terminal-target actions).
+  if (approvalGatedActions.includes(action) && !canRunPbdAction(actorRole as UserRole)) {
     return `Action "${action}" requires PBD or Admin role`;
   }
 
@@ -173,7 +184,7 @@ export async function runCostingAction(
         const { data: profile } = await supabase
           .from("user_profiles")
           .select("id")
-          .or(`id.eq.${submitter},auth_user_id.eq.${submitter}`)
+          .or(`id.eq.${pgrestValue(submitter)},auth_user_id.eq.${pgrestValue(submitter)}`)
           .eq("role", "factory")
           .eq("is_active", true)
           .maybeSingle();

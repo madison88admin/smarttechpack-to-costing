@@ -1,4 +1,5 @@
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { pgrestLike } from "@/lib/supabase/filters";
 import { convertCurrency, getRate } from "@/lib/currency/rates";
 
 export type HistoricalCostingRow = {
@@ -197,11 +198,11 @@ export async function listHistoricalCostings(input?: string | {
     .order("approved_at", { ascending: false })
     .limit(maxRows);
 
-  if (filters.query?.trim()) request = request.ilike("searchable_text", `%${filters.query.trim()}%`);
-  if (filters.factory?.trim()) request = request.ilike("factory_name", `%${filters.factory.trim()}%`);
-  if (filters.brand?.trim()) request = request.ilike("brand", `%${filters.brand.trim()}%`);
-  if (filters.customer?.trim()) request = request.ilike("customer", `%${filters.customer.trim()}%`);
-  if (filters.season?.trim()) request = request.ilike("season", `%${filters.season.trim()}%`);
+  if (filters.query?.trim()) request = request.ilike("searchable_text", pgrestLike(filters.query.trim()));
+  if (filters.factory?.trim()) request = request.ilike("factory_name", pgrestLike(filters.factory.trim()));
+  if (filters.brand?.trim()) request = request.ilike("brand", pgrestLike(filters.brand.trim()));
+  if (filters.customer?.trim()) request = request.ilike("customer", pgrestLike(filters.customer.trim()));
+  if (filters.season?.trim()) request = request.ilike("season", pgrestLike(filters.season.trim()));
 
   const { data, error } = await request;
   if (error) throw error;
@@ -213,7 +214,151 @@ export type LikeStyleMatch = HistoricalCostingRow & {
   matchReasons: string[];
   /** Costing notes (pricing caveats, smv/labor notes, approval comments) that matched the notes query. */
   matchingNotes: Array<{ note_type: string; note: string; tags: string[] }>;
+  /** Fraction of the maximum attainable score for this query (0–100). */
+  scorePercent: number;
+  /** How many historical costings were evaluated (excludes the current request). */
+  sampleSize: number;
+  /** low / medium / high — driven by the score ratio and the sample size. */
+  confidence: MatchConfidence;
 };
+
+export type MatchConfidence = "low" | "medium" | "high";
+
+/**
+ * Maximum points per like-style dimension. Kept here so the search page, the
+ * register exports, and the confidence label all agree on the attainable max.
+ */
+export const LIKE_STYLE_WEIGHTS = {
+  yarn: 3,
+  knit: 3,
+  machine: 2,
+  construction: 2,
+  category: 1,
+  factory: 2,
+  brand: 2,
+  customer: 2,
+  season: 1
+} as const;
+
+/**
+ * Confidence in a like-style match, driven by how much of the maximum
+ * attainable score the row earned and how many historical costings were
+ * evaluated. Fewer than 3 comparables is never more than "low".
+ */
+export function matchConfidence(matchScore: number, maxScore: number, sampleSize: number): MatchConfidence {
+  const ratio = maxScore > 0 ? matchScore / maxScore : 0;
+  if (sampleSize < 3) return "low";
+  if (ratio >= 0.75) return sampleSize >= 5 ? "high" : "medium";
+  if (ratio >= 0.5) return "medium";
+  return "low";
+}
+
+/**
+ * The maximum score a row could earn for this query: the weights of every
+ * attribute criterion set, plus the +2 notes bonus when a notes query is given.
+ */
+export function likeStylesMaxScore(input: LikeStyleMatchInput): number {
+  let total = 0;
+  if (input.yarnType?.trim()) total += LIKE_STYLE_WEIGHTS.yarn;
+  if (input.knitType?.trim()) total += LIKE_STYLE_WEIGHTS.knit;
+  if (input.machineType?.trim()) total += LIKE_STYLE_WEIGHTS.machine;
+  if (input.construction?.trim()) total += LIKE_STYLE_WEIGHTS.construction;
+  if (input.productCategory?.trim()) total += LIKE_STYLE_WEIGHTS.category;
+  if (input.factoryName?.trim()) total += LIKE_STYLE_WEIGHTS.factory;
+  if (input.brand?.trim()) total += LIKE_STYLE_WEIGHTS.brand;
+  if (input.customer?.trim()) total += LIKE_STYLE_WEIGHTS.customer;
+  if (input.season?.trim()) total += LIKE_STYLE_WEIGHTS.season;
+  if (input.notesQuery?.trim()) total += 2;
+  return total;
+}
+
+// Tokens that carry no matching signal for garment attributes.
+const TOKEN_STOPWORDS = new Set(["a", "an", "the", "of", "for", "with", "and", "or", "in", "on"]);
+
+/**
+ * Normalizes a garment-attribute string into matching tokens: lowercase,
+ * punctuation stripped, percentages expanded ("100%" → "100 percent"), so
+ * "100% Acrylic" and "100%ACRYLIC" and "100 % Acrylic" all match.
+ */
+export function tokenizeAttribute(value: string): string[] {
+  return value
+    .toLowerCase()
+    .replace(/%/g, " percent ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0 && !TOKEN_STOPWORDS.has(token));
+}
+
+/**
+ * Best prefix-overlap ratio between one query token and any row token: 1.0 for
+ * an exact match, else len(shorter) / len(longer) when one token is a prefix of
+ * the other, else 0. Only tokens of at least 2 characters qualify, so
+ * single-character noise ("x", "1") never earns credit.
+ */
+function bestPrefixCredit(queryToken: string, rowTokens: string[]): number {
+  if (queryToken.length < 2) return 0;
+  let best = 0;
+  for (const rowToken of rowTokens) {
+    if (rowToken.length < 2) continue;
+    if (rowToken === queryToken) return 1;
+    const shorter = queryToken.length < rowToken.length ? queryToken : rowToken;
+    const longer = queryToken.length < rowToken.length ? rowToken : queryToken;
+    if (longer.startsWith(shorter)) {
+      const ratio = shorter.length / longer.length;
+      if (ratio > best) best = ratio;
+    }
+  }
+  return best;
+}
+
+/**
+ * Normalized token-overlap scorer (replaces raw substring matching).
+ * - exact normalized match → full weight
+ * - partial token overlap → proportional credit, minimum 1 point, so a row
+ *   sharing "acrylic" with a longer query still earns a real signal instead of
+ *   a binary substring yes/no
+ * - prefix token overlap → proportional credit (only when no exact token is
+ *   shared), so a partial term like "Acry" still surfaces "Acrylic" rows. The
+ *   credit mirrors the overlap formula and can never reach full weight, so a
+ *   partial term never outranks the exact term on the same row
+ * - no shared or prefix tokens → 0
+ */
+export function scoreAttribute(a?: string | null, b?: string | null, weight = 1): number {
+  if (!a || !b) return 0;
+  const left = a.trim().toLowerCase();
+  const right = b.trim().toLowerCase();
+  if (left === right) return weight;
+
+  // Unique tokens only — counting duplicates (e.g. "acrylic" twice in a yarn
+  // description) would double-credit the same concept and skew the overlap.
+  const uniqueLeft = [...new Set(tokenizeAttribute(left))];
+  const uniqueRight = [...new Set(tokenizeAttribute(right))];
+  if (!uniqueLeft.length || !uniqueRight.length) return 0;
+
+  const rightSet = new Set(uniqueRight);
+  const shared = uniqueLeft.filter((token) => rightSet.has(token)).length;
+  if (shared > 0) {
+    const overlap = shared / Math.max(uniqueLeft.length, uniqueRight.length);
+    return Math.max(1, weight * overlap);
+  }
+
+  // Prefix path — no exact token is shared, but a query token that is a prefix
+  // of a row token (or vice versa) still earns proportional credit. Aggregated
+  // like the overlap path (sum of best ratios ÷ the larger token count) and
+  // floored at the same minimum 1 point, so the semantics stay consistent.
+  const prefixTotal = uniqueLeft.reduce((sum, token) => sum + bestPrefixCredit(token, uniqueRight), 0);
+  if (prefixTotal > 0) {
+    const credit = (prefixTotal / Math.max(uniqueLeft.length, uniqueRight.length)) * weight;
+    return Math.max(1, credit);
+  }
+  return 0;
+}
+
+/** Renders "Yarn +3" for whole points and "Yarn +1.3" for fractional credit. */
+export function formatPoints(points: number): string {
+  return Number.isInteger(points) ? String(points) : points.toFixed(1);
+}
 
 export async function findLikeStyles(input: LikeStyleMatchInput): Promise<LikeStyleMatch[]> {
   // Fetch all historical costings and score in JS (avoids text search false negatives)
@@ -252,34 +397,58 @@ export function scoreLikeStyles(
 ): LikeStyleMatch[] {
   const minScore = input.minScore ?? 0;
   const limit = input.limit ?? 10;
+  // Every match shares the same context: how many comparables were evaluated
+  // and the maximum score the query could possibly award. Confidence is
+  // derived from those, so a 5/8 row on a thin library reads "low" but the
+  // same 5/8 row on a rich library reads "medium".
+  const sampleSize = rows.filter((row) => row.costing_request_id !== input.excludeRequestId).length;
+  const maxScore = likeStylesMaxScore(input);
 
   return rows
     .filter((row) => row.costing_request_id !== input.excludeRequestId)
     .map((row) => {
       const matches = [
-        ["Yarn", row.yarn_type, input.yarnType, 3],
-        ["Knit", row.knit_type, input.knitType, 3],
-        ["Machine", row.machine_type, input.machineType, 2],
-        ["Construction", row.construction, input.construction, 2],
-        ["Category", row.product_category, input.productCategory, 1],
-        ["Factory", row.factory_name, input.factoryName, 2],
-        ["Brand", row.brand, input.brand, 2],
-        ["Customer", row.customer, input.customer, 2],
-        ["Season", row.season, input.season, 1]
+        ["Yarn", row.yarn_type, input.yarnType, LIKE_STYLE_WEIGHTS.yarn],
+        ["Knit", row.knit_type, input.knitType, LIKE_STYLE_WEIGHTS.knit],
+        ["Machine", row.machine_type, input.machineType, LIKE_STYLE_WEIGHTS.machine],
+        ["Construction", row.construction, input.construction, LIKE_STYLE_WEIGHTS.construction],
+        ["Category", row.product_category, input.productCategory, LIKE_STYLE_WEIGHTS.category],
+        ["Factory", row.factory_name, input.factoryName, LIKE_STYLE_WEIGHTS.factory],
+        ["Brand", row.brand, input.brand, LIKE_STYLE_WEIGHTS.brand],
+        ["Customer", row.customer, input.customer, LIKE_STYLE_WEIGHTS.customer],
+        ["Season", row.season, input.season, LIKE_STYLE_WEIGHTS.season]
       ] as const;
-      const scored = matches.map(([label, current, target, weight]) => ({ label, points: score(current, target, weight) }));
-      const matchReasons = scored.filter((match) => match.points > 0).map((match) => `${match.label} +${match.points}`);
-      let matchScore = scored.reduce((total, match) => total + match.points, 0);
+      const scored = matches.map(([label, current, target, weight]) => ({
+        label,
+        points: scoreAttribute(current, target, weight)
+      }));
+      const matchReasons = scored
+        .filter((match) => match.points > 0)
+        .map((match) => `${match.label} +${formatPoints(match.points)}`);
+      let matchScore = round2(scored.reduce((total, match) => total + match.points, 0));
       const matchingNotes = notesByRequest?.get(row.costing_request_id) ?? [];
       if (matchingNotes.length > 0) {
         matchScore += 2;
         matchReasons.push("Notes +2");
       }
-      return { ...row, matchScore, matchReasons, matchingNotes };
+      return {
+        ...row,
+        matchScore,
+        matchReasons,
+        matchingNotes,
+        scorePercent: maxScore > 0 ? Math.min(100, Math.round((matchScore / maxScore) * 100)) : 0,
+        sampleSize,
+        confidence: matchConfidence(matchScore, maxScore, sampleSize)
+      };
     })
     .filter((row) => row.matchScore > 0 && row.matchScore >= minScore)
     .sort((a, b) => b.matchScore - a.matchScore)
     .slice(0, limit);
+}
+
+/** Rounds to 2 decimals so token-overlap scores stay tidy (1.2857… → 1.29). */
+function round2(value: number): number {
+  return Math.round(value * 100) / 100;
 }
 
 export type LikeStyleMatchInput = {
@@ -297,14 +466,6 @@ export type LikeStyleMatchInput = {
   minScore?: number;
   limit?: number;
 };
-
-function score(a?: string | null, b?: string | null, weight = 1) {
-  if (!a || !b) return 0;
-  const left = a.trim().toLowerCase();
-  const right = b.trim().toLowerCase();
-  if (left === right) return weight;
-  return left.includes(right) || right.includes(left) ? Math.max(1, weight - 1) : 0;
-}
 
 export async function tryListHistoricalCostings(input?: Parameters<typeof listHistoricalCostings>[0]) {
   try {

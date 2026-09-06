@@ -5,7 +5,7 @@ import { createMockSupabase, inserts, type Responder } from "./helpers/supabase-
 // SLA reminder/escalation emails must never leak internal review stage names
 // to factory users. Factory users are excluded from escalation emails about
 // internal statuses (for_md_review / for_costing_review / for_pbd_review /
-// pending_manager_approval), but DO receive them for factory-visible statuses
+// for_pbd_review), but DO receive them for factory-visible statuses
 // like needs_clarification.
 
 const { mocks } = vi.hoisted(() => ({ mocks: { client: null as unknown } }));
@@ -147,7 +147,7 @@ describe("processEscalations — factory visibility in SLA emails", () => {
     process.env.ESCALATION_EMAIL = "manager@example.com";
     try {
       const responder = escalationResponder({
-        costing_requests: { select: () => ({ data: requestRows("pending_manager_approval"), error: null }) },
+        costing_requests: { select: () => ({ data: requestRows("for_pbd_review"), error: null }) },
         user_profiles: users([{ email: "factory@example.com", role: "factory" }])
       });
       const { client, calls } = createMockSupabase(responder);

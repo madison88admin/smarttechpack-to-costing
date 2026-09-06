@@ -192,4 +192,165 @@ describe("findLikeStyles", () => {
     const results = await findLikeStyles({ machineType: "32G" });
     expect(results.length).toBe(0);
   });
+
+  it("tokenizes attributes so formatting noise does not hide a match (100% Acrylic vs 100%ACRYLIC)", async () => {
+    const { client } = createMockSupabase(responder({
+      historical_costings: {
+        select: () => ({
+          data: [{ ...rows[0], id: "h-token", yarn_type: "100%ACRYLIC" }],
+          error: null
+        })
+      }
+    }));
+    mocks.client = client;
+
+    // Old substring matching gave 0 here ("100%acrylic" does not contain
+    // "100% acrylic"); token normalization gives the full weight.
+    const results = await findLikeStyles({ yarnType: "100% Acrylic" });
+    expect(results).toHaveLength(1);
+    expect(results[0].matchScore).toBe(3);
+    expect(results[0].matchReasons).toContain("Yarn +3");
+  });
+
+  it("awards proportional credit for partial token overlap instead of binary substring", async () => {
+    const { client } = createMockSupabase(responder({
+      historical_costings: {
+        select: () => ({
+          data: [{ ...rows[0], id: "h-partial", yarn_type: "Reguler Acrylic - 1/34s 100% Acrylic" }],
+          error: null
+        })
+      }
+    }));
+    mocks.client = client;
+
+    // Row unique tokens: {reguler, acrylic, 1, 34s, 100, percent} — query
+    // covers {acrylic, 100, percent} (3/6), so yarn credit is 3 × 0.5 = 1.5.
+    // The reason surfaces the fractional points so reviewers see WHY.
+    const results = await findLikeStyles({ yarnType: "100% Acrylic" });
+    expect(results).toHaveLength(1);
+    expect(results[0].matchScore).toBeCloseTo(1.5, 2);
+    expect(results[0].matchReasons).toContain("Yarn +1.5");
+  });
+
+  it("surfaces a prefix term like Acry as an Acrylic row with proportional credit", async () => {
+    const { client } = createMockSupabase(responder({
+      historical_costings: {
+        select: () => ({ data: [{ ...rows[0], id: "h-prefix", yarn_type: "Acrylic" }], error: null })
+      }
+    }));
+    mocks.client = client;
+
+    // No exact token shared ("acry" ≠ "acrylic"), so the prefix path kicks in:
+    // ratio 4/7 ÷ max(1,1) × yarn weight 3 = 1.71 — real signal, below full.
+    const results = await findLikeStyles({ yarnType: "Acry" });
+    expect(results).toHaveLength(1);
+    expect(results[0].matchScore).toBeCloseTo(1.714, 2);
+    expect(results[0].matchReasons).toContain("Yarn +1.7");
+    expect(results[0].scorePercent).toBeLessThan(100);
+  });
+
+  it("never lets a prefix term outrank the exact term on the same row", async () => {
+    const { client } = createMockSupabase(responder({
+      historical_costings: {
+        select: () => ({ data: [{ ...rows[0], id: "h-prefix", yarn_type: "Acrylic" }], error: null })
+      }
+    }));
+    mocks.client = client;
+
+    const exact = await findLikeStyles({ yarnType: "Acrylic" });
+    const prefix = await findLikeStyles({ yarnType: "Acry" });
+    expect(exact[0].matchScore).toBe(3); // full weight
+    expect(prefix[0].matchScore).toBeLessThan(exact[0].matchScore);
+
+    // Multi-token row: "Acrylic/Wool" — exact "Acrylic" (1/2 overlap → 1.5)
+    // still beats the prefix "Acry" (0.571/2 × 3 → floored to 1.0).
+    const { client: c2 } = createMockSupabase(responder({
+      historical_costings: {
+        select: () => ({ data: [{ ...rows[0], id: "h-prefix2", yarn_type: "Acrylic/Wool" }], error: null })
+      }
+    }));
+    mocks.client = c2;
+    const exact2 = await findLikeStyles({ yarnType: "Acrylic" });
+    const prefix2 = await findLikeStyles({ yarnType: "Acry" });
+    expect(exact2[0].matchScore).toBeCloseTo(1.5, 2);
+    expect(prefix2[0].matchScore).toBeLessThan(exact2[0].matchScore);
+  });
+
+  it("gives no prefix credit to single-character terms", async () => {
+    const { client } = createMockSupabase(responder({
+      historical_costings: {
+        select: () => ({ data: [{ ...rows[0], id: "h-prefix", yarn_type: "Acrylic" }], error: null })
+      }
+    }));
+    mocks.client = client;
+
+    const results = await findLikeStyles({ yarnType: "A" });
+    expect(results).toHaveLength(0);
+  });
+
+  it("surfaces score percent, evaluated sample size, and confidence on every match", async () => {
+    const { client } = createMockSupabase(responder());
+    mocks.client = client;
+
+    const results = await findLikeStyles({ yarnType: "100% Acrylic", knitType: "Jacquard", machineType: "7G" });
+    const top = results[0];
+    // 8 of 8 attainable points, 3 historical rows evaluated → medium confidence
+    // (full match but fewer than 5 comparables).
+    expect(top.scorePercent).toBe(100);
+    expect(top.sampleSize).toBe(3);
+    expect(top.confidence).toBe("medium");
+  });
+
+  it("rates confidence low on a thin library and high on a rich one", async () => {
+    // Thin library: only 1 comparable row → even a perfect match is low confidence.
+    {
+      const { client } = createMockSupabase(responder({
+        historical_costings: {
+          select: () => ({ data: [rows[0]], error: null })
+        }
+      }));
+      mocks.client = client;
+      const thin = await findLikeStyles({ yarnType: "100% Acrylic" });
+      expect(thin[0].sampleSize).toBe(1);
+      expect(thin[0].confidence).toBe("low");
+    }
+
+    // Rich library: 5+ comparables, full match → high confidence.
+    {
+      const fiveRows = [rows[0], rows[1], rows[2], { ...rows[1], id: "h4" }, { ...rows[1], id: "h5" }];
+      const { client } = createMockSupabase(responder({
+        historical_costings: {
+          select: () => ({ data: fiveRows, error: null })
+        }
+      }));
+      mocks.client = client;
+      const rich = await findLikeStyles({ yarnType: "100% Acrylic", knitType: "Jacquard", machineType: "7G" });
+      expect(rich[0].sampleSize).toBe(5);
+      expect(rich[0].confidence).toBe("high");
+    }
+  });
+
+  it("factors factory, brand, customer, and season into the visible breakdown", async () => {
+    const enriched = [
+      { ...rows[0], id: "h-dim", factory_name: "Cebu Factory", brand: "Madison88", customer: "Arc'teryx", season: "SS27" }
+    ];
+    const { client } = createMockSupabase(responder({
+      historical_costings: {
+        select: () => ({ data: enriched, error: null })
+      }
+    }));
+    mocks.client = client;
+
+    const results = await findLikeStyles({
+      yarnType: "100% Acrylic",
+      factoryName: "Cebu Factory",
+      brand: "Madison88",
+      customer: "Arc'teryx",
+      season: "SS27"
+    });
+    expect(results[0].matchScore).toBe(3 + 2 + 2 + 2 + 1); // yarn + factory + brand + customer + season
+    for (const reason of ["Yarn +3", "Factory +2", "Brand +2", "Customer +2", "Season +1"]) {
+      expect(results[0].matchReasons).toContain(reason);
+    }
+  });
 });

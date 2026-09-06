@@ -80,7 +80,9 @@ export function legacyKendoSearchPayload(query: string, field = "Name") {
     skip: 0,
     page: 1,
     pageSize: 20,
-    filter: `${field}~contains~'${query.replace(/'/g, "''")}'`
+    // Cap the term so an oversized value cannot blow up the upstream request
+    // or its response. No legitimate search approaches this length.
+    filter: `${field}~contains~'${query.slice(0, 200).replace(/'/g, "''")}'`
   };
 }
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  assertCustomerReviewEditable,
   assertCustomerStatusKnown,
   assertCustomerStatusTransition,
   computeRevisionNumber,
@@ -7,7 +8,8 @@ import {
   CUSTOMER_STATUSES,
   CUSTOMER_STATUS_TRANSITIONS,
   customerStatusDerivedUpdates,
-  customerStatusTargets
+  customerStatusTargets,
+  customerStatusTargetsForRequest
 } from "../src/lib/costing/customer-status";
 import { canRunPbdAction } from "../src/lib/auth/roles";
 
@@ -115,6 +117,44 @@ describe("customerStatusDerivedUpdates", () => {
     for (const status of ["not_submitted", "pending_customer_submission", "under_negotiation", "closed"] as const) {
       expect(customerStatusDerivedUpdates(status, now, 0), `status: ${status}`).toEqual({});
     }
+  });
+});
+
+describe("customer review approval gate (assertCustomerReviewEditable)", () => {
+  it("only allows moves after the internal approval", () => {
+    expect(assertCustomerReviewEditable("approved")).toBeNull();
+  });
+
+  it("blocks every pre-approval and post-rejection request status", () => {
+    for (const requestStatus of [
+      "draft",
+      "sent_to_factory",
+      "for_md_review",
+      "for_costing_review",
+      "for_pbd_review",
+      "needs_clarification",
+      "rejected"
+    ]) {
+      const error = assertCustomerReviewEditable(requestStatus);
+      expect(error, `request status: ${requestStatus}`).toContain("after the internal approval");
+    }
+  });
+
+  it("exposes no customer targets while the request is unapproved", () => {
+    expect(customerStatusTargetsForRequest("not_submitted", "sent_to_factory")).toEqual([]);
+    expect(customerStatusTargetsForRequest("pending_customer_submission", "draft")).toEqual([]);
+    expect(customerStatusTargetsForRequest("sent_to_customer", "needs_clarification")).toEqual([]);
+  });
+
+  it("keeps the full machine reachable once approved", () => {
+    expect(customerStatusTargetsForRequest("pending_customer_submission", "approved")).toEqual(["sent_to_customer"]);
+    expect(customerStatusTargetsForRequest("sent_to_customer", "approved")).toEqual([
+      "under_negotiation",
+      "customer_approved",
+      "customer_rejected_revised"
+    ]);
+    expect(customerStatusTargetsForRequest("customer_approved", "approved")).toEqual(["closed"]);
+    expect(customerStatusTargetsForRequest("not_submitted", "approved")).toEqual(["pending_customer_submission"]);
   });
 });
 

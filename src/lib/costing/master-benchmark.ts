@@ -1,4 +1,5 @@
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { pgrestValue } from "@/lib/supabase/filters";
 
 /**
  * Master material list benchmark — aggregates cost references from ALL
@@ -208,8 +209,8 @@ export async function listBenchmarkHistory(opts: { label?: string; category?: st
       .select("*")
       .order("created_at", { ascending: false })
       .limit(opts.limit ?? 50);
-    if (opts.label) query = query.eq("label", opts.label.trim().replace(/\s+/g, " "));
-    if (opts.category) query = query.eq("category", opts.category);
+    if (opts.label) query = query.eq("label", pgrestValue(opts.label.trim().replace(/\s+/g, " ")));
+    if (opts.category) query = query.eq("category", pgrestValue(opts.category));
 
     const { data, error } = await query;
     if (error) return { data: [], error: error.message };

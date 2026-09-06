@@ -1,8 +1,6 @@
 import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
 import { AnomalyAlertsPanel } from "@/components/anomaly-alerts-panel";
-import { BulkActions } from "@/components/bulk-actions";
-import { RequestTable } from "@/components/request-table";
 import { tryListCostingRequests } from "@/lib/costing/requests";
 import { getUnreadInAppAlerts } from "@/lib/notifications/in-app";
 import { ChangeAlertsPanel } from "@/components/change-alerts-panel";
@@ -10,43 +8,17 @@ import { MarginAnalyticsPanel } from "@/components/margin-analytics-panel";
 import { FactoryScorecardPanel } from "@/components/factory-scorecard-panel";
 import { SavingsOpportunityPanel } from "@/components/savings-opportunity-panel";
 import { canCreateRequest, canRunPbdAction, canRunCostingAction, getCurrentRole, getCurrentUserId, getRoleLabel } from "@/lib/auth/roles";
-import { resolveFactoryProfileId } from "@/lib/admin/assignments";
+import { resolveFactoryScope, scopeRowsForRole } from "@/lib/costing/request-listing";
 import { getAgingSummary, tryGetAgingData } from "@/lib/costing/aging";
 import { getMarginAnalytics } from "@/lib/costing/margin-analytics";
 import { getFactoryScorecard } from "@/lib/costing/factory-scorecard";
 import { getSavingsOpportunity } from "@/lib/costing/savings-opportunity";
 import { defaultWorkflowSettings, getWorkflowSettings } from "@/lib/admin/settings";
-import { IconSearch, IconDownload, IconX, IconArrowLeft, IconArrowRight } from "@/components/ui/icons";
+import { IconArrowRight } from "@/components/ui/icons";
 import { StatusPill } from "@/components/status-pill";
 import { maskStatusForRole } from "@/lib/workflow/status";
 import { SlaBreachTable } from "@/components/sla-breach-table";
-import { SearchableFilter } from "@/components/searchable-filter";
-import { tryGetNextGenFilterOptions } from "@/lib/nextgen/filter-options";
-
-const allStatusOptions = [
-  { value: "all", label: "All statuses" },
-  { value: "draft", label: "Draft" },
-  { value: "sent_to_factory", label: "Sent to Factory" },
-  { value: "for_md_review", label: "For MD Review" },
-  { value: "for_costing_review", label: "For Costing Review" },
-  { value: "for_pbd_review", label: "For PBD Review" },
-  { value: "needs_clarification", label: "Needs Clarification" },
-  { value: "approved", label: "Approved" },
-  { value: "rejected", label: "Rejected" },
-  { value: "overdue", label: "Overdue" }
-];
-
-// Factory never sees the internal MD/Costing/PBD/Manager review statuses or
-// the internally-approved outcome — those belong to the Madison88 team.
-const factoryStatusOptions = allStatusOptions.filter(
-  (option) =>
-    !["for_md_review", "for_costing_review", "for_pbd_review", "pending_manager_approval", "approved"].includes(option.value)
-);
-
-// PBD sees all statuses (they track requests through the full pipeline)
-const pbdStatusOptions = allStatusOptions;
-
-const PAGE_SIZE = 5;
+import { AnalyticsTabs, type AnalyticsTab } from "@/components/analytics-tabs";
 
 export default async function Home({
   searchParams
@@ -60,61 +32,36 @@ export default async function Home({
   const season = searchParams?.season ?? "";
   const from = searchParams?.from ?? "";
   const to = searchParams?.to ?? "";
-  const page = Math.max(1, parseInt(searchParams?.page ?? "1", 10) || 1);
-  const offset = (page - 1) * PAGE_SIZE;
-  const sortBy = searchParams?.sortBy ?? "created_at";
-  const sortDir = (searchParams?.sortDir === "asc" ? "asc" : "desc") as "asc" | "desc";
-  const exportHref = `/api/export/requests.csv?${new URLSearchParams({ q: query, status, brand, customer, season, from, to } as Record<string, string>).toString()}`;
   const role = getCurrentRole();
   const canCreate = canCreateRequest(role);
-  const factoryProfileId = role === "factory"
-    ? await resolveFactoryProfileId(getCurrentUserId()).catch(() => null)
-    : null;
-
-  // Role-based visibility: pass the user's role to filter visible statuses
-  const listed = await tryListCostingRequests({
-    query,
-    status: status === "overdue" ? "all" : status,
-    brand: brand || undefined,
-    customer: customer || undefined,
-    season: season || undefined,
-    from: from || undefined,
-    to: to || undefined,
-    limit: role === "factory" ? 1000 : PAGE_SIZE,
-    offset: role === "factory" ? 0 : offset,
-    roles: [role],
-    sortBy,
-    sortDir
-  });
-  // Factory users only see requests assigned to them. Draft is always
-  // filtered out for unassigned factory users; sent_to_factory and
-  // needs_clarification must also be restricted to the caller's assignment
-  // so that factory users cannot access other factories' queues.
-  const visibleListedRows = (listed.data ?? []).filter((row) =>
-    role !== "factory" || Boolean(factoryProfileId && row.assigned_factory_user_id === factoryProfileId)
-  );
-  const rows = role === "factory" ? visibleListedRows.slice(offset, offset + PAGE_SIZE) : visibleListedRows;
-  const total = role === "factory" ? visibleListedRows.length : listed.total;
-  const error = listed.error;
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-
-  // Fetch overall counts for metrics (respect brand/customer/season/date filters for pipeline accuracy)
-  const { data: allRows } = await tryListCostingRequests({
-    query,
-    status: "all",
-    brand: brand || undefined,
-    customer: customer || undefined,
-    season: season || undefined,
-    from: from || undefined,
-    to: to || undefined,
-    limit: 1000,
-    offset: 0,
-    roles: [role]
-  });
+  // Independent sources load concurrently — these were previously awaited one
+  // by one, stacking ~7 Supabase roundtrips of network latency onto every
+  // navigation to `/`. Nothing below depends on anything else in this block.
+  const [factoryScope, listed, workflowSettings, aging, unreadAlerts] = await Promise.all([
+    resolveFactoryScope(role, getCurrentUserId() ?? ""),
+    // Fetch overall counts for metrics (respect brand/customer/season/date filters for pipeline accuracy)
+    tryListCostingRequests({
+      query,
+      status: "all",
+      brand: brand || undefined,
+      customer: customer || undefined,
+      season: season || undefined,
+      from: from || undefined,
+      to: to || undefined,
+      limit: 1000,
+      offset: 0,
+      roles: [role]
+    }),
+    getWorkflowSettings().catch(() => defaultWorkflowSettings),
+    // Aging analysis
+    tryGetAgingData(),
+    // Unread in-app change alerts (BOM changed / PBD pricing updated) per request.
+    getUnreadInAppAlerts(role).catch(() => ({ alerts: [], totalUnread: 0, perRequest: {} as Record<string, number> }))
+  ]);
+  const { factoryProfileId } = factoryScope;
+  const { data: allRows } = listed;
   // Same assignment gate for metrics: factory users only count their own requests.
-  const metricsRows = (allRows ?? []).filter((row) =>
-    role !== "factory" || Boolean(factoryProfileId && row.assigned_factory_user_id === factoryProfileId)
-  );
+  const metricsRows = scopeRowsForRole(allRows ?? [], role, factoryProfileId);
   const forReview = metricsRows.filter((row) => row.status === "for_pbd_review").length;
   const forCosting = metricsRows.filter((row) => row.status === "for_costing_review").length;
   const clarification = metricsRows.filter((row) => row.status === "needs_clarification").length;
@@ -123,51 +70,101 @@ export default async function Home({
 
   // Portfolio margin analytics (internal roles only — margin/pricing never
   // reaches the factory; the panel itself is never rendered for them).
-  const workflowSettings = await getWorkflowSettings().catch(() => defaultWorkflowSettings);
-  const marginAnalytics = role === "factory"
-    ? null
-    : await getMarginAnalytics(workflowSettings.marginThresholdUsd);
   // Factory scorecard — quote accuracy vs master benchmark, cycle time per
   // stage, and clarification/rework rate. Internal analytics only.
-  const factoryScorecard = role === "factory" ? null : await getFactoryScorecard();
   // Savings opportunity — over-benchmark material lines quantified per
   // garment / per MOQ order. Internal analytics only.
-  const savingsOpportunity = role === "factory" ? null : await getSavingsOpportunity();
-
-  // Aging analysis
-  const aging = await tryGetAgingData();
+  // These three are independent of each other (margin only needs the settings
+  // value already resolved above), so they run side by side as well.
+  const [marginAnalytics, factoryScorecard, savingsOpportunity] =
+    role === "factory"
+      ? [null, null, null]
+      : await Promise.all([
+          getMarginAnalytics(workflowSettings.marginThresholdUsd),
+          getFactoryScorecard(),
+          getSavingsOpportunity()
+        ]);
   // Factory users only see SLA data for their own assigned requests.
   const factoryAgingRows = role === "factory" && factoryProfileId
     ? aging.rows.filter((r) => {
-        const matched = visibleListedRows.find((row) => row.id === r.id);
+        const matched = metricsRows.find((row) => row.id === r.id);
         return Boolean(matched && matched.assigned_factory_user_id === factoryProfileId);
       })
     : aging.rows;
   const agingSummary = getAgingSummary(factoryAgingRows);
-  const overdueIds = new Set(factoryAgingRows.filter((r) => r.is_overdue).map((r) => r.id));
-  // When overdue filter is active, show all overdue rows (not just current page)
-  const displayRows = status === "overdue"
-    ? metricsRows.filter((row: any) => overdueIds.has(row.id))
-    : rows;
   const actionStatuses = getActionStatuses(role);
   const actionRows = metricsRows.filter((row: any) => actionStatuses.includes(row.status)).slice(0, 5);
   const queueLabel = getQueueLabel(role);
 
-  // Options for Brand/Customer/Season dropdowns — primary from NexGen (live), fallback to pipeline
-  const nextGenOpts = role === "factory"
-    ? { brands: [], customers: [], seasons: [] }
-    : await tryGetNextGenFilterOptions().catch(() => ({ brands: [], customers: [], seasons: [] }));
-  const pipelineBrands = [...new Set(metricsRows.map((r: { brand?: string | null }) => r.brand).filter((v): v is string => Boolean(v)))].sort();
-  const pipelineCustomers = [...new Set(metricsRows.map((r: { customer?: string | null }) => r.customer).filter((v): v is string => Boolean(v)))].sort();
-  const pipelineSeasons = [...new Set(metricsRows.map((r: { season?: string | null }) => r.season).filter((v): v is string => Boolean(v)))].sort();
-  // Merge NexGen + pipeline, NexGen first (more authoritative for master data)
-  const brandOptions = [...new Set([...(nextGenOpts.brands ?? []), ...pipelineBrands])].sort();
-  const customerOptions = [...new Set([...(nextGenOpts.customers ?? []), ...pipelineCustomers])].sort();
-  const seasonOptions = [...new Set([...(nextGenOpts.seasons ?? []), ...pipelineSeasons])].sort();
-
-  // Unread in-app change alerts (BOM changed / PBD pricing updated) per request.
-  const unreadAlerts = await getUnreadInAppAlerts(role).catch(() => ({ alerts: [], totalUnread: 0, perRequest: {} as Record<string, number> }));
   const unreadCounts = unreadAlerts.perRequest;
+
+  // The heavy analytics panels live behind tabs so the dashboard stays short.
+  // Each panel keeps its full depth — the tab bar only decides what is visible.
+  const analyticsTabs: AnalyticsTab[] = [];
+
+  if (agingSummary && agingSummary.overdue > 0) {
+    analyticsTabs.push({
+      id: "sla",
+      label: "SLA Breaches",
+      badge: String(agingSummary.overdue),
+      badgeTone: "red",
+      content: (
+        <section className="panel" style={{ marginTop: 12, borderColor: "#dc2626" }}>
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">SLA breach report — who owns the request, when it started, and when it breached</p>
+              <h2 style={{ color: "#dc2626" }}>SLA Breaches</h2>
+            </div>
+            <span className="status red">{agingSummary.overdue} breached</span>
+          </div>
+          <SlaBreachTable rows={factoryAgingRows.filter((r) => r.is_overdue)} statusLabels={Object.fromEntries(factoryAgingRows.map((r) => [r.status, maskStatusForRole(r.status, role)]))} role={role} />
+        </section>
+      )
+    });
+  }
+
+  if (role !== "factory" && marginAnalytics?.data) {
+    analyticsTabs.push({
+      id: "margin",
+      label: "Margin Analytics",
+      badge: String(marginAnalytics.data.belowThresholdCount),
+      badgeTone: marginAnalytics.data.belowThresholdCount > 0 ? "amber" : "green",
+      content: <MarginAnalyticsPanel analytics={marginAnalytics.data} thresholdUsd={workflowSettings.marginThresholdUsd} />
+    });
+  }
+
+  if (role !== "factory" && factoryScorecard?.data) {
+    analyticsTabs.push({
+      id: "scorecard",
+      label: "Factory Scorecard",
+      badge: String(factoryScorecard.data.rows.length),
+      badgeTone: "blue",
+      content: <FactoryScorecardPanel scorecard={factoryScorecard.data} />
+    });
+  }
+
+  if (role !== "factory" && savingsOpportunity?.data) {
+    analyticsTabs.push({
+      id: "savings",
+      label: "Savings Opportunity",
+      badge: String(savingsOpportunity.data.flaggedLines),
+      badgeTone: "amber",
+      content: <SavingsOpportunityPanel savings={savingsOpportunity.data} />
+    });
+  }
+
+  if (canRunPbdAction(role)) {
+    analyticsTabs.push({
+      id: "anomalies",
+      label: "Cost Anomalies",
+      content: (
+        <section className="panel" style={{ marginTop: 12 }}>
+          <h2>Cost Anomaly Alerts</h2>
+          <AnomalyAlertsPanel />
+        </section>
+      )
+    });
+  }
 
   return (
     <AppShell>
@@ -198,22 +195,22 @@ export default async function Home({
 
       <div className="dashboard-utility-row" aria-label="Dashboard shortcuts">
         <span className="dashboard-utility-caption">Workspace view</span>
-        <Link className={`dashboard-chip${status === "all" ? " active" : ""}`} href="/">All requests</Link>
-        <Link className="dashboard-chip" href="/?status=overdue">Overdue</Link>
-        <Link className="dashboard-chip" href="/?status=needs_clarification">Needs clarification</Link>
+        <Link className="dashboard-chip" href="/requests">All requests</Link>
+        <Link className="dashboard-chip" href="/requests?status=overdue">Overdue</Link>
+        <Link className="dashboard-chip" href="/requests?status=needs_clarification">Needs clarification</Link>
         {role !== "factory" ? <Link className="dashboard-chip dashboard-chip-accent" href="/reports">Open reporting</Link> : null}
       </div>
 
       <div className="grid metrics">
         {canRunCostingAction(role) ? (
-          <Link href="/?status=for_costing_review" className="metric metric-clickable">
+          <Link href="/requests?status=for_costing_review" className="metric metric-clickable">
             <span className="metric-label">For Costing Review</span>
             <strong>{forCosting}</strong>
             <small>Awaiting Costing Team validation</small>
           </Link>
         ) : null}
         {(["admin", "pbd", "manager"].includes(role)) ? (
-          <Link href="/?status=for_pbd_review" className="metric metric-clickable">
+          <Link href="/requests?status=for_pbd_review" className="metric metric-clickable">
             <span className="metric-label">For PBD Review</span>
             <strong>{forReview}</strong>
             <small>Waiting for buyer decision</small>
@@ -226,12 +223,12 @@ export default async function Home({
             <small>Open factory queue</small>
           </Link>
         ) : null}
-        <Link href="/?status=needs_clarification" className="metric metric-clickable">
+        <Link href="/requests?status=needs_clarification" className="metric metric-clickable">
           <span className="metric-label">Needs Clarification</span>
           <strong>{clarification}</strong>
           <small>Returned to factory</small>
         </Link>
-        {role !== "factory" ? <Link href="/?status=approved" className="metric metric-clickable">
+        {role !== "factory" ? <Link href="/requests?status=approved" className="metric metric-clickable">
           <span className="metric-label">Internally Approved</span>
           <strong>{approved}</strong>
           <small>Saved to history</small>
@@ -273,61 +270,34 @@ export default async function Home({
       {role !== "factory" ? <ChangeAlertsPanel /> : null}
 
       {agingSummary && agingSummary.total > 0 ? (
-        <>
-          <div className="grid metrics" style={{ marginTop: 12 }}>
-            <div className="metric">
-              <span className="metric-label">Fresh (0-2d)</span>
-              <strong className="text-green">{agingSummary.fresh}</strong>
-              <small>Within SLA</small>
-            </div>
-            <div className="metric">
-              <span className="metric-label">Aging (3-5d)</span>
-              <strong className="text-amber">{agingSummary.aging}</strong>
-              <small>Approaching SLA</small>
-            </div>
-            <div className="metric">
-              <span className="metric-label">Overdue</span>
-              <strong className="text-red">{agingSummary.overdue}</strong>
-              <small>SLA breach</small>
-            </div>
-            <div className="metric">
-              <span className="metric-label">Avg Days in Status</span>
-              <strong>{agingSummary.averageDaysInStatus?.toFixed(1) ?? "—"}</strong>
-              <small>Across active requests</small>
-            </div>
+        <div className="grid metrics" style={{ marginTop: 12 }}>
+          <div className="metric">
+            <span className="metric-label">Fresh (0-2d)</span>
+            <strong className="text-green">{agingSummary.fresh}</strong>
+            <small>Within SLA</small>
           </div>
-          {agingSummary.overdue > 0 ? (
-            <section className="panel" style={{ marginTop: 12, borderColor: "#dc2626" }}>
-              <div className="section-heading">
-                <div>
-                  <p className="eyebrow">SLA breach report — who owns the request, when it started, and when it breached</p>
-                  <h2 style={{ color: "#dc2626" }}>SLA Breaches</h2>
-                </div>
-                <span className="status red">{agingSummary.overdue} breached</span>
-              </div>
-              <SlaBreachTable rows={factoryAgingRows.filter((r) => r.is_overdue)} statusLabels={Object.fromEntries(factoryAgingRows.map((r) => [r.status, maskStatusForRole(r.status, role)]))} role={role} />
-            </section>
-          ) : null}
-        </>
+          <div className="metric">
+            <span className="metric-label">Aging (3-5d)</span>
+            <strong className="text-amber">{agingSummary.aging}</strong>
+            <small>Approaching SLA</small>
+          </div>
+          <div className="metric">
+            <span className="metric-label">Overdue</span>
+            <strong className="text-red">{agingSummary.overdue}</strong>
+            <small>SLA breach</small>
+          </div>
+          <div className="metric">
+            <span className="metric-label">Avg Days in Status</span>
+            <strong>{agingSummary.averageDaysInStatus?.toFixed(1) ?? "—"}</strong>
+            <small>Across active requests</small>
+          </div>
+        </div>
       ) : null}
 
-      {role !== "factory" && marginAnalytics?.data ? (
-        <MarginAnalyticsPanel analytics={marginAnalytics.data} thresholdUsd={workflowSettings.marginThresholdUsd} />
-      ) : null}
-
-      {role !== "factory" && factoryScorecard?.data ? (
-        <FactoryScorecardPanel scorecard={factoryScorecard.data} />
-      ) : null}
-
-      {role !== "factory" && savingsOpportunity?.data ? (
-        <SavingsOpportunityPanel savings={savingsOpportunity.data} />
-      ) : null}
-
-      {canRunPbdAction(role) ? (
-        <section className="panel" style={{ marginTop: 12 }}>
-          <h2>Cost Anomaly Alerts</h2>
-          <AnomalyAlertsPanel />
-        </section>
+      {analyticsTabs.length > 1 ? (
+        <AnalyticsTabs tabs={analyticsTabs} />
+      ) : analyticsTabs.length === 1 ? (
+        analyticsTabs[0].content
       ) : null}
 
       <div style={{ height: 16 }} />
@@ -376,94 +346,16 @@ export default async function Home({
             <h2>Costing Requests</h2>
           </div>
           <div className="section-heading-right">
-            <span className={`status ${error ? "red" : "green"}`}>{error ? "Data Unavailable" : "Live Data"}</span>
-            {role !== "factory" ? <Link className="button secondary btn-sm" href={exportHref}>
-              <IconDownload size={14} /> Export CSV
-            </Link> : null}
-            {role !== "factory" ? <Link className="button secondary btn-sm" href="/api/export/cbd-detail.csv">
-              <IconDownload size={14} /> CBD Detail
-            </Link> : null}
+            <span className="status green">Live Data</span>
+            <Link className="button secondary btn-sm" href="/requests">
+              Open All Requests <IconArrowRight size={14} />
+            </Link>
           </div>
         </div>
-        {error ? (
-          <p className="notice">
-            Live data is unavailable. No sample records are being shown. Check the Supabase connection and application logs, then retry.
-          </p>
-        ) : null}
-        <form className="toolbar filter-toolbar report-filter-grid" action="/" style={{ marginBottom: 12 }}>
-          <SearchableFilter name="brand" label="Brand" value={brand} options={brandOptions} />
-          <SearchableFilter name="customer" label="Customer" value={customer} options={customerOptions} />
-          <SearchableFilter name="season" label="Season" value={season} options={seasonOptions} />
-          <select className="input filter-select" name="status" defaultValue={status} aria-label="All statuses">
-            {(canRunCostingAction(role) ? allStatusOptions : role === "factory" ? factoryStatusOptions : pbdStatusOptions).map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-          <input className="input" type="date" name="from" defaultValue={from} aria-label="From date" title="From date (mm/dd/yyyy)" />
-          <input className="input" type="date" name="to" defaultValue={to} aria-label="To date" title="To date (mm/dd/yyyy)" />
-          <div className="filter-search" style={{ gridColumn: "1 / -1" }}>
-            <IconSearch size={16} className="search-icon" />
-            <input
-              className="input search-input"
-              name="q"
-              defaultValue={query}
-              placeholder="Search request number or factory..."
-            />
-          </div>
-          <div className="report-filter-actions" style={{ gridColumn: "1 / -1" }}>
-            <button className="button" type="submit">
-              Filter
-            </button>
-            {query || status !== "all" || brand || customer || season || from || to ? (
-              <Link className="button secondary" href="/">
-                <IconX size={14} /> Clear
-              </Link>
-            ) : null}
-            <span style={{ fontSize: 11, color: "var(--muted)", marginLeft: 8 }}>Date inputs show calendar dropdown on click (mm/dd/yyyy)</span>
-          </div>
-        </form>
-        {!error ? <BulkActions canPbdAct={canRunPbdAction(role)} canCostingAct={canRunCostingAction(role)} /> : null}
-        <RequestTable
-          rows={error ? null : displayRows}
-          sortBy={sortBy}
-          sortDir={sortDir}
-          queryParams={{ q: query, status, brand, customer, season, from, to, page: String(page) }}
-          role={role}
-          overdueIds={overdueIds}
-          unreadCounts={unreadCounts}
-        />
-        {!error && total > 0 && status !== "overdue" ? (
-          <div className="pagination">
-            <span className="pagination-info">
-              Showing {offset + 1}–{Math.min(offset + PAGE_SIZE, total)} of {total} requests
-            </span>
-            <div className="pagination-controls">
-              {page > 1 ? (
-                <Link
-                  className="button secondary small-btn"
-                  href={`/?${buildPaginationUrl(query, status, page - 1, { brand, customer, season, from, to })}`}
-                >
-                  <IconArrowLeft size={14} /> Prev
-                </Link>
-              ) : (
-                <button className="button secondary small-btn" disabled><IconArrowLeft size={14} /> Prev</button>
-              )}
-              <span className="pagination-page">Page {page} of {totalPages}</span>
-              {page < totalPages ? (
-                <Link
-                  className="button secondary small-btn"
-                  href={`/?${buildPaginationUrl(query, status, page + 1, { brand, customer, season, from, to })}`}
-                >
-                  Next <IconArrowRight size={14} />
-                </Link>
-              ) : (
-                <button className="button secondary small-btn" disabled>Next <IconArrowRight size={14} /></button>
-              )}
-            </div>
-          </div>
-        ) : null}
+        <p style={{ margin: 0, color: "var(--muted)", fontSize: 13 }}>
+          The full request list — filters, search, bulk actions, and exports — lives on the{" "}
+          <Link href="/requests">All Requests</Link> page, so this dashboard stays focused on your queue and analytics.
+        </p>
       </section>
       </div>
     </AppShell>
@@ -480,7 +372,7 @@ function getActionStatuses(role: string) {
   if (role === "md") return ["for_md_review"];
   if (role === "manager") return ["for_pbd_review"];
   if (role === "pbd") return ["for_pbd_review", "needs_clarification"];
-  return ["for_costing_review", "for_pbd_review", "pending_manager_approval", "needs_clarification"];
+  return ["for_costing_review", "for_pbd_review", "needs_clarification"];
 }
 
 function getQueueLabel(role: string) {
@@ -501,15 +393,4 @@ function getNextStepHint(role: string, counts: { forCosting: number; forReview: 
   return counts.clarification ? `${counts.clarification} needs clarification — factory is correcting.` : "All queues monitored.";
 }
 
-function buildPaginationUrl(query: string, status: string, page: number, extra?: { brand?: string; customer?: string; season?: string; from?: string; to?: string }) {
-  const params = new URLSearchParams();
-  if (query) params.set("q", query);
-  if (status && status !== "all") params.set("status", status);
-  if (extra?.brand) params.set("brand", extra.brand);
-  if (extra?.customer) params.set("customer", extra.customer);
-  if (extra?.season) params.set("season", extra.season);
-  if (extra?.from) params.set("from", extra.from);
-  if (extra?.to) params.set("to", extra.to);
-  params.set("page", String(page));
-  return params.toString();
-}
+

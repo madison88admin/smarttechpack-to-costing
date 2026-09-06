@@ -25,7 +25,7 @@ export default async function FactoryPage() {
     : rows;
   const assigned = factoryProfileId ? visibleRows.filter((row) => row.assigned_factory_user_id === factoryProfileId) : [];
   const submissionStatuses = new Set(["sent_to_factory", "needs_clarification", "draft"]);
-  const reviewStatuses = new Set(["for_costing_review", "for_pbd_review", "pending_manager_approval"]);
+  const reviewStatuses = new Set(["for_costing_review", "for_pbd_review"]);
   const submissionQueue = visibleRows.filter((row) => submissionStatuses.has(row.status));
   const reviewQueue = visibleRows.filter((row) => reviewStatuses.has(row.status));
   const overdue = visibleRows.filter((row) => agingById.get(row.id)?.is_overdue);

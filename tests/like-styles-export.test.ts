@@ -22,6 +22,9 @@ function match(overrides: Partial<LikeStyleMatch> = {}): LikeStyleMatch {
     average_consumption: 0.21,
     knitting_time: 0.45,
     matchScore: 8,
+    scorePercent: 100,
+    sampleSize: 12,
+    confidence: "high",
     matchReasons: ["Yarn +3", "Knit +3", "Machine +2"],
     matchingNotes: [{ note_type: "smv_note", note: "SMV re-checked", tags: ["smv"] }],
     ...overrides
@@ -46,6 +49,9 @@ describe("like-styles export helper", () => {
       knitting_time: 0.45,
       approved_at: "2025-01-10T00:00:00Z",
       match_score: 8,
+      match_score_percent: 100,
+      match_confidence: "high",
+      match_sample_size: 12,
       match_reasons: "Yarn +3, Knit +3, Machine +2",
       matching_notes: "smv_note: SMV re-checked",
       costing_request_id: "req-1"
@@ -64,10 +70,13 @@ describe("like-styles export helper", () => {
   });
 
   it("builds CSV with a header row and one line per match", () => {
-    const csv = likeStylesCsv([match(), match({ id: "h2", style_number: "M88-200", matchScore: 5 })]);
+    const csv = likeStylesCsv([match(), match({ id: "h2", style_number: "M88-200", matchScore: 5, scorePercent: 63 })]);
     const lines = csv.trim().split("\n");
     expect(lines).toHaveLength(3);
     expect(lines[0]).toBe(LIKE_STYLES_EXPORT_HEADERS.join(","));
+    expect(lines[0]).toContain("match_confidence");
+    expect(lines[0]).toContain("match_sample_size");
+    expect(lines[0]).toContain("match_score_percent");
     expect(lines[1]).toContain("M88-100");
     expect(lines[1]).toContain("Yarn +3, Knit +3, Machine +2");
   });

@@ -42,9 +42,12 @@ function buildCrumbs(pathname: string): Crumb[] {
     const isLast = i === segments.length - 1;
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(seg);
     const label = routeLabels[seg] ?? (isUuid ? `${seg.slice(0, 8)}…` : seg);
+    // There is no /requests index page — request lists live on the dashboard.
+    // Link the intermediate "Requests" crumb there instead of a 404 route.
+    const href = isLast ? undefined : seg === "requests" ? "/" : path;
     crumbs.push({
       label,
-      href: isLast ? undefined : path
+      href
     });
   }
 

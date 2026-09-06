@@ -15,7 +15,9 @@ export const CUSTOMER_STATUSES = [
 
 export type CustomerStatus = (typeof CUSTOMER_STATUSES)[number];
 
-// Mirrors the `transitions` map in customer-status/route.ts.
+// Single owner of the customer-status machine; the route in
+// src/app/api/costing/requests/[id]/customer-status/route.ts imports these
+// verdicts instead of re-declaring the transitions.
 export const CUSTOMER_STATUS_TRANSITIONS: Record<CustomerStatus, CustomerStatus[]> = {
   not_submitted: ["pending_customer_submission"],
   pending_customer_submission: ["sent_to_customer"],
@@ -31,9 +33,36 @@ export function assertCustomerStatusKnown(status: string): string | null {
   return CUSTOMER_STATUSES.includes(status as CustomerStatus) ? null : "Invalid customer status";
 }
 
+/**
+ * The customer review lifecycle is external and may only be driven AFTER the
+ * internal approval. A draft / in-review / factory-correction request must not
+ * be recorded as sent to the customer or closed — only `approved` requests may
+ * advance. Returns an error message, or null when the costing request status
+ * permits customer-status edits.
+ */
+export function assertCustomerReviewEditable(requestStatus: string): string | null {
+  if (requestStatus !== "approved") {
+    return `Customer review can only be updated after the internal approval (current request status: "${requestStatus}")`;
+  }
+  return null;
+}
+
 /** Returns the statuses reachable from `fromStatus`. */
 export function customerStatusTargets(fromStatus: CustomerStatus): CustomerStatus[] {
   return CUSTOMER_STATUS_TRANSITIONS[fromStatus] ?? [];
+}
+
+/**
+ * Targets reachable when the customer-status move is also legal from the
+ * given costing-request status (internal approval must precede external
+ * review). Returns [] when the request status blocks all moves.
+ */
+export function customerStatusTargetsForRequest(
+  fromStatus: CustomerStatus,
+  requestStatus: string
+): CustomerStatus[] {
+  if (assertCustomerReviewEditable(requestStatus) !== null) return [];
+  return customerStatusTargets(fromStatus);
 }
 
 /**

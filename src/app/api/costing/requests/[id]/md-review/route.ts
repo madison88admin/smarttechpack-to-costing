@@ -33,7 +33,15 @@ export async function POST(request: Request, context: { params: { id: string } }
     .select("status")
     .eq("id", context.params.id)
     .single();
-  if (currentError) return NextResponse.json({ ok: false, error: currentError.message }, { status: 500 });
+  if (currentError) {
+    // PGRST116: well-formed id that does not exist → 404, never a 500.
+    const status =
+      currentError.message.includes("JSON object requested") ||
+      currentError.message.includes("single JSON object")
+        ? 404
+        : 500;
+    return NextResponse.json({ ok: false, error: currentError.message }, { status });
+  }
   const statusError = assertMdReviewFromStatus(current.status);
   if (statusError) {
     return NextResponse.json({ ok: false, error: statusError }, { status: 409 });

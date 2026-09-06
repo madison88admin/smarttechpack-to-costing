@@ -16,7 +16,8 @@ import {
   IconCheck,
   IconSettings,
   IconAudit,
-  IconAlert
+  IconAlert,
+  IconFileText
 } from "@/components/ui/icons";
 
 type NavItem = {
@@ -31,6 +32,8 @@ type NavItem = {
 // Main / Data / Quality sections are for operational roles only.
 const nav: NavItem[] = [
   { href: "/", label: "Dashboard", icon: IconDashboard, roles: ["admin", "manager", "pbd", "costing", "factory", "md", "viewer"], section: "Main" },
+  { href: "/requests", label: "All Requests", icon: IconLayers, roles: ["admin", "manager", "pbd", "costing", "factory", "md", "viewer"], section: "Main" },
+  { href: "/cbd", label: "CBD Review", icon: IconFileText, roles: ["admin", "manager", "pbd", "costing", "md"], section: "Main" },
   { href: "/reports", label: "Reporting Dashboard", icon: IconChart, roles: ["admin", "manager", "pbd", "costing"], section: "Main" },
   { href: "/requests/new", label: "Create Request", icon: IconPlus, roles: ["admin", "pbd"], section: "Main" },
   { href: "/requests/bulk", label: "Bulk Create", icon: IconLayers, roles: ["admin", "pbd"], section: "Main" },
@@ -77,7 +80,13 @@ export function SidebarNav({ role, userName }: { role: string; userName: string 
               const isActive =
                 item.href === "/"
                   ? pathname === "/"
-                  : pathname === item.href || pathname.startsWith(item.href + "/");
+                  : item.href === "/requests"
+                    // All Requests highlights the list itself and request detail
+                    // pages, but not the Create/Bulk/Import sub-pages (they have
+                    // their own items).
+                    ? pathname === "/requests" ||
+                      (/^\/requests\/[^/]+$/.test(pathname) && !["new", "bulk", "import"].includes(pathname.split("/")[2]))
+                    : pathname === item.href || pathname.startsWith(item.href + "/");
 
               const Icon = item.icon;
 

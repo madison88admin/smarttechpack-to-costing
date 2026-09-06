@@ -21,7 +21,6 @@ describe("SLA owner role mapping", () => {
     expect(ownerRoleForStatus("for_md_review")).toBe("md");
     expect(ownerRoleForStatus("for_costing_review")).toBe("costing");
     expect(ownerRoleForStatus("for_pbd_review")).toBe("pbd");
-    expect(ownerRoleForStatus("pending_manager_approval")).toBe("pbd");
   });
 
   it("returns null for terminal or unknown statuses", () => {
@@ -52,7 +51,6 @@ describe("shared SLA thresholds (hours-based)", () => {
     expect(getSlaDays("for_md_review", settings)).toBe(1); // 24h
     expect(getSlaDays("for_costing_review", settings)).toBe(1);
     expect(getSlaDays("for_pbd_review", settings)).toBe(1);
-    expect(getSlaDays("pending_manager_approval", settings)).toBe(1);
   });
 
   it("returns no SLA for terminal statuses", () => {

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { canManageMaterialLibrary, getCurrentRole } from "@/lib/auth/roles";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { pgrestValue } from "@/lib/supabase/filters";
 import { fetchBom } from "@/lib/nextgen/bom";
 import { normalizeProductSearch } from "@/lib/nextgen/normalize";
 import { legacyKendoSearchPayload, nextGenPost } from "@/lib/nextgen/client";
@@ -120,10 +121,10 @@ export async function POST() {
             nextgen_material_code: mat.materialCode ?? null,
             updated_at: new Date().toISOString()
           })
-          .ilike("material_name", mat.materialName);
+          .ilike("material_name", pgrestValue(mat.materialName));
 
         if (mat.category) {
-          query = query.ilike("category", mat.category);
+          query = query.ilike("category", pgrestValue(mat.category));
         } else {
           query = query.is("category", null);
         }

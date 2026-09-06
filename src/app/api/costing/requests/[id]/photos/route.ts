@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { pgrestValue } from "@/lib/supabase/filters";
 import { canSubmitFactoryCbd, canReviewCbd, getCurrentRole, getCurrentUserName } from "@/lib/auth/roles";
 import { validateRequestId } from "@/lib/api/validate";
 
@@ -155,7 +156,7 @@ export async function DELETE(request: Request, context: { params: { id: string }
   const { data: photo, error: fetchError } = await supabase
     .from("cbd_photos")
     .select("id, file_path")
-    .eq("id", photoId)
+    .eq("id", pgrestValue(photoId))
     .eq("costing_request_id", context.params.id)
     .maybeSingle();
 
@@ -181,7 +182,7 @@ export async function DELETE(request: Request, context: { params: { id: string }
   const { error: deleteError } = await supabase
     .from("cbd_photos")
     .delete()
-    .eq("id", photoId)
+    .eq("id", pgrestValue(photoId))
     .eq("costing_request_id", context.params.id);
 
   if (deleteError) {

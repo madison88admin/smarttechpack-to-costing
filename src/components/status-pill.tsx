@@ -17,7 +17,6 @@ const statusIcons: Record<CostingStatus, React.ComponentType<{ size?: number }>>
   for_md_review: IconSearch,
   for_costing_review: IconSearch,
   for_pbd_review: IconClock,
-  pending_manager_approval: IconClock,
   approved: IconCheckCircle,
   rejected: IconXCircle,
   under_review: IconClock

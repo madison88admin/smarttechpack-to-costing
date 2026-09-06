@@ -65,7 +65,7 @@ const COMPARE_FIELDS = [
   "costingLearning"
 ];
 
-const FIELD_LABELS: Record<string, string> = {
+export const CBD_DIFF_FIELD_LABELS: Record<string, string> = {
   laborCost: "Labor Cost",
   overheadCost: "Overhead",
   profitMargin: "Profit Margin %",
@@ -85,6 +85,9 @@ const FIELD_LABELS: Record<string, string> = {
   notes: "Factory Notes",
   costingLearning: "Costing Learnings"
 };
+
+// Internal alias — the diff builder below still references the short name.
+const FIELD_LABELS: Record<string, string> = CBD_DIFF_FIELD_LABELS;
 
 export async function getCbdDiff(requestId: string): Promise<CbdDiffResult | null> {
   const supabase = createSupabaseServiceClient();

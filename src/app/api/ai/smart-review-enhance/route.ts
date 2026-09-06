@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { askLlm, isLlmConfigured } from "@/lib/ai/llm-client";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { pgrestValue } from "@/lib/supabase/filters";
 import { calculateCostingTotals } from "@/lib/costing/totals";
 import { getCurrentRole } from "@/lib/auth/roles";
 import { checkRateLimit, getClientIp, RATE_LIMITS } from "@/lib/auth/rate-limit";
@@ -38,14 +39,14 @@ export async function POST(request: Request) {
   const { data: req } = await supabase
     .from("costing_requests")
     .select("id, request_number, status, factory_name, priority, product_id, nextgen_products (style_number, name)")
-    .eq("id", body.requestId)
+    .eq("id", pgrestValue(body.requestId))
     .maybeSingle();
 
   // Fetch CBD data (may not exist yet)
   const { data: cbd } = await supabase
     .from("factory_cbds")
     .select("raw_payload, cbd_material_lines (material_name, unit_cost, total_cost, currency)")
-    .eq("costing_request_id", body.requestId)
+    .eq("costing_request_id", pgrestValue(body.requestId))
     .order("submitted_at", { ascending: false, nullsFirst: false })
     .order("id", { ascending: false })
     .limit(1)
