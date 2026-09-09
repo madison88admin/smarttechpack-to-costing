@@ -100,7 +100,37 @@ export async function fetchBom(input: BomQueryInput, config: BomConfig = getBomC
     payload.filter = filter;
   }
 
-  const result = await nextGenPost("productBom", payload);
+  let result;
+  try {
+    result = await nextGenPost("productBom", payload);
+  } catch (error) {
+    // Upstream session/transport failures throw (e.g. login backoff or the
+    // NextGen host being unreachable). Surface them as a 502-style upstream
+    // error so the route reports "upstream unavailable" instead of a 500.
+    const message = error instanceof Error ? error.message : String(error);
+    const cacheKey = input.styleNumber ? `style-${input.styleNumber}` : input.entityId ? `entity-${input.entityId}` : null;
+    const cached = cacheKey ? readBomCache(cacheKey) : null;
+    if (cached?.length) {
+      return {
+        ok: true,
+        status: 200,
+        upstreamContentType: "application/json",
+        data: cached,
+        total: cached.length,
+        warning: "NextGen is unavailable. Showing cached reference BOM data; refresh when the upstream session is available.",
+        rawBody: { Data: cached, Total: cached.length, source: "local-cache" }
+      };
+    }
+    return {
+      ok: false,
+      status: 502,
+      upstreamContentType: "text/plain",
+      data: [],
+      total: 0,
+      warning: `NextGen upstream unavailable: ${message}`,
+      rawBody: { error: message }
+    };
+  }
 
   if (!result.ok) {
     const cacheKey = input.styleNumber ? `style-${input.styleNumber}` : input.entityId ? `entity-${input.entityId}` : null;

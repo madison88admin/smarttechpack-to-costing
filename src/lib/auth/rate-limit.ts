@@ -83,6 +83,35 @@ export function checkRateLimit(
 }
 
 /**
+ * Check whether a key is currently blocked WITHOUT incrementing the counter.
+ * Use for endpoints where only failures should consume quota (login): peek,
+ * then recordRateLimitHit on failure / resetRateLimit on success.
+ */
+export function isRateLimited(key: string, maxRequests: number, windowMs: number): boolean {
+  cleanup();
+  const entry = store.get(key);
+  return entry !== undefined && entry.resetAt >= Date.now() && entry.count >= maxRequests;
+}
+
+/** Increment the failure counter for a key (must follow isRateLimited). */
+export function recordRateLimitHit(key: string, maxRequests: number, windowMs: number): void {
+  cleanup();
+  const now = Date.now();
+  const entry = store.get(key);
+  if (!entry || entry.resetAt < now) {
+    store.set(key, { count: 1, resetAt: now + windowMs });
+  } else {
+    entry.count++;
+  }
+}
+
+/** Clear the counter for a key — used on successful auth so legit users and
+ * automated smoke suites are never locked out by their own successes. */
+export function resetRateLimit(key: string): void {
+  store.delete(key);
+}
+
+/**
  * Get client IP from request headers.
  * Handles X-Forwarded-For and X-Real-IP headers.
  */

@@ -12,6 +12,8 @@
     "test": "vitest run --pool=threads --poolOptions.threads.singleThread=true",
     "test:watch": "vitest",
     "fuzz:http": "node scripts/fuzz-http.mjs --roles pbd,admin",
+    "test:e2e": "playwright test",
+    "test:load": "node tests/load/load-test.mjs",
     "verify": "npm run lint && npm run typecheck && npm run test && npm run build"
   },
   "dependencies": {
@@ -25,6 +27,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/node": "^20.14.10",
     "@types/nodemailer": "^7.0.1",
     "@types/react": "^18.3.3",

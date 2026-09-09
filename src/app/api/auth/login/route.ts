@@ -4,7 +4,7 @@ import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { pgrestValue } from "@/lib/supabase/filters";
 import { verifyPassword } from "@/lib/auth/passwords";
 import { createSupabaseAuthClient, isSupabaseAuthEnabled } from "@/lib/auth/supabase-auth";
-import { checkRateLimit, getClientIp, RATE_LIMITS } from "@/lib/auth/rate-limit";
+import { getClientIp, isRateLimited, RATE_LIMITS, recordRateLimitHit, resetRateLimit } from "@/lib/auth/rate-limit";
 import { createSessionToken, SESSION_COOKIE, SESSION_TTL_SECONDS } from "@/lib/auth/session";
 
 const validRoles = new Set<UserRole>(["superadmin", "admin", "manager", "pbd", "costing", "factory", "md", "viewer"]);
@@ -96,14 +96,15 @@ async function findSupabaseAuthUser(username: string, password: string) {
 }
 
 export async function POST(request: Request) {
-  // Rate limit: 5 login attempts per 15 minutes per IP
+  // Rate limit: 5 FAILED login attempts per 15 minutes per IP. Successful
+  // logins must never consume quota (they reset the window), otherwise a
+  // legit user — or the smoke suite — gets locked out by its own successes.
   const clientIp = getClientIp(request);
-  const rateLimit = checkRateLimit(`login:${clientIp}`, RATE_LIMITS.login.maxRequests, RATE_LIMITS.login.windowMs);
-  if (!rateLimit.allowed) {
-    const retryAfter = Math.ceil((rateLimit.resetAt - Date.now()) / 1000);
+  const rateLimitKey = `login:${clientIp}`;
+  if (isRateLimited(rateLimitKey, RATE_LIMITS.login.maxRequests, RATE_LIMITS.login.windowMs)) {
     return NextResponse.json(
-      { ok: false, error: `Too many login attempts. Please try again in ${retryAfter} seconds.` },
-      { status: 429, headers: { "Retry-After": String(retryAfter) } }
+      { ok: false, error: "Too many login attempts. Please try again later." },
+      { status: 429, headers: { "Retry-After": "900" } }
     );
   }
 
@@ -113,8 +114,12 @@ export async function POST(request: Request) {
   const user = (await findSupabaseAuthUser(username, password)) ?? (await findProfileUser(username, password)) ?? findPilotUser(username, password);
 
   if (!user) {
+    recordRateLimitHit(rateLimitKey, RATE_LIMITS.login.maxRequests, RATE_LIMITS.login.windowMs);
     return NextResponse.json({ ok: false, error: "Invalid email or password" }, { status: 401 });
   }
+
+  // Successful auth clears the failure window for this IP.
+  resetRateLimit(rateLimitKey);
 
   const response = NextResponse.json({ ok: true, role: user.role, name: user.name, email: user.email ?? null });
   const isProduction = process.env.NODE_ENV === "production";

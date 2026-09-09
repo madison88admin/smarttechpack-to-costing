@@ -108,6 +108,29 @@ export async function nextGenPost(endpoint: NextGenEndpointKey, payload: Request
   return doNextGenPost(endpoint, payload);
 }
 
+/**
+ * nextGenPost that never throws. Session/transport failures (login backoff,
+ * unreachable host) reject from doNextGenPost, which would otherwise surface
+ * as a 500 in the route layer. This wrapper converts them into a graceful
+ * 502-style upstream error so routes report "upstream unavailable" instead.
+ */
+export async function safeNextGenPost(
+  endpoint: NextGenEndpointKey,
+  payload: RequestPayload
+): Promise<{ ok: boolean; status: number; upstreamContentType: string; body: unknown }> {
+  try {
+    return await nextGenPost(endpoint, payload);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      ok: false,
+      status: 502,
+      upstreamContentType: "text/plain",
+      body: { error: message }
+    };
+  }
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

@@ -83,12 +83,14 @@ export default async function AdminAuditPage({
           <option value="all">All event types</option>
           <option value="factory_submit">Factory Submit</option>
           <option value="costing_complete">Costing Complete</option>
-          <option value="pbd_approve">PBD Approve</option>
-          <option value="pbd_reject">PBD Reject</option>
+          <option value="approve">PBD Approve</option>
+          <option value="reject">PBD Reject</option>
           <option value="send_to_factory">Send to Factory</option>
-          <option value="needs_clarification">Needs Clarification</option>
-          <option value="customer_status_change">Customer Status Change</option>
+          <option value="clarify">Clarification Requested</option>
+          <option value="md_review">MD Review</option>
+          <option value="customer_status_changed">Customer Status Change</option>
           <option value="escalation">Escalation</option>
+          <option value="reminder">Reminder</option>
           <option value="nextgen_backfill">NextGen Backfill</option>
         </select>
         <button className="button" type="submit">
