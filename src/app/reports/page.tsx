@@ -306,7 +306,7 @@ export default async function ReportsPage({
                 <h2>Approved cost by construction inputs</h2>
               </div>
             </div>
-            <p className="chart-caption">Use this to compare average approved cost across yarn, knit type, machine, construction, and customer. It is decision support for costing review; excluded outliers are omitted.</p>
+            <p className="chart-caption">Use this to compare average approved cost across yarn, knit type, machine, construction, and customer. It is decision support for costing review; excluded outliers are omitted, and history with no recorded yarn, machine, construction, customer, or factory is left out rather than charted as “Unassigned”.</p>
             <div className="report-dimension-grid">
               {[
                 ["Factory", r.byFactoryCost],

@@ -1,3 +1,4 @@
+import { HISTORICAL_READ_MAX_ROWS } from "@/lib/costing/history";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { internalReviewStatuses, terminalStatuses, type CostingStatus } from "@/lib/workflow/status";
 
@@ -165,11 +166,27 @@ export async function getReportData(filters: ReportFilters = {}): Promise<Report
 
   if (requestsError) throw requestsError;
 
-  const { data: approved, error: approvedError } = await supabase
-    .from("historical_costings")
-    .select("costing_request_id,total_cost,currency,approved_at,benchmark_excluded,yarn_type,knit_type,machine_type,construction,factory_name,customer,season");
+  // PostgREST caps one response at 1000 rows, so a single select quietly
+  // aggregated an arbitrary window of the library — a factory that is in the
+  // register could be missing from these charts entirely. Page the read with a
+  // stable order key so pages cannot duplicate or skip rows, up to the same
+  // ceiling the register uses.
+  const historyPageSize = 1000;
+  const approved: Array<Record<string, unknown>> = [];
+  for (let offset = 0; offset < HISTORICAL_READ_MAX_ROWS; offset += historyPageSize) {
+    const { data, error: approvedError } = await supabase
+      .from("historical_costings")
+      .select(
+        "costing_request_id,total_cost,currency,approved_at,benchmark_excluded,yarn_type,knit_type,machine_type,construction,factory_name,customer,season"
+      )
+      .order("approved_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(offset, offset + historyPageSize - 1);
 
-  if (approvedError) throw approvedError;
+    if (approvedError) throw approvedError;
+    approved.push(...((data ?? []) as Array<Record<string, unknown>>));
+    if (!data || data.length < historyPageSize) break;
+  }
 
   const allRows: ReportRequestRow[] = ((requests ?? []) as Array<Record<string, unknown>>).map((row) => {
     const product = Array.isArray(row.nextgen_products)
@@ -343,12 +360,12 @@ export async function getReportData(filters: ReportFilters = {}): Promise<Report
     benchmark,
     seasonComparison,
     dataSource: "tp_costing",
-    byYarn: groupCostDimension(dimensionRows, "yarn_type", "No yarn"),
-    byKnit: groupCostDimension(dimensionRows, "knit_type", "No knit type"),
-    byMachine: groupCostDimension(dimensionRows, "machine_type", "No machine"),
-    byConstruction: groupCostDimension(dimensionRows, "construction", "No construction"),
-    byCustomerCost: groupCostDimension(dimensionRows, "customer", "No customer"),
-    byFactoryCost: groupCostDimension(dimensionRows, "factory_name", "Unassigned"),
+    byYarn: groupCostDimension(dimensionRows, "yarn_type"),
+    byKnit: groupCostDimension(dimensionRows, "knit_type"),
+    byMachine: groupCostDimension(dimensionRows, "machine_type"),
+    byConstruction: groupCostDimension(dimensionRows, "construction"),
+    byCustomerCost: groupCostDimension(dimensionRows, "customer"),
+    byFactoryCost: groupCostDimension(dimensionRows, "factory_name"),
     freshness,
     rows
   };
@@ -385,12 +402,15 @@ function groupBy(
 
 function groupCostDimension(
   rows: ReportApprovedRow[],
-  field: "yarn_type" | "knit_type" | "machine_type" | "construction" | "customer" | "factory_name",
-  fallback: string
+  field: "yarn_type" | "knit_type" | "machine_type" | "construction" | "customer" | "factory_name"
 ): ReportCostDimension[] {
   const map = new Map<string, { count: number; sum: number; costCount: number }>();
   for (const row of rows) {
-    const key = (row[field] ?? "").trim() || fallback;
+    // A blank yarn/machine/factory is missing data, not a category. Charting it
+    // as "Unassigned"/"No machine" made unresolved imports the biggest cost
+    // driver on every card, so unattributed rows are left out entirely.
+    const key = (row[field] ?? "").trim();
+    if (!key) continue;
     const entry = map.get(key) ?? { count: 0, sum: 0, costCount: 0 };
     entry.count += 1;
     if (typeof row.total_cost === "number" && Number.isFinite(row.total_cost) && row.total_cost > 0) {
