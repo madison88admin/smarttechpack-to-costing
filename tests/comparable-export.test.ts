@@ -113,6 +113,22 @@ describe("buildComparableSheets", () => {
     expect(sheets).toEqual([]); // the only match is the request itself
   });
 
+  it("lists a style once per sheet even when the register holds several of its costing records", () => {
+    // The register keeps every ERP costing record of a style; a comparable sheet
+    // must not spend its rows on the same style at three prices.
+    const revisions = [
+      hist({ id: "rev-1", style_number: "M88-100", costing_request_id: "x1", approved_at: "2025-03-10T00:00:00Z", total_cost: 3.4 }),
+      hist({ id: "rev-2", style_number: "M88-100", costing_request_id: "x2", approved_at: "2025-02-10T00:00:00Z", total_cost: 3.1 }),
+      hist({ id: "rev-3", style_number: "M88-100", costing_request_id: "x3", approved_at: "2025-01-10T00:00:00Z", total_cost: 2.9 }),
+      hist({ id: "other", style_number: "M88-200", costing_request_id: "x4" })
+    ];
+
+    const sheets = buildComparableSheets([requests[0]], revisions, 5);
+    const styles = sheets[0].aoa.slice(3).map((row) => (row as unknown[])[0]);
+
+    expect(styles).toEqual(["M88-100", "M88-200"]);
+  });
+
   it("caps the comparables per request", () => {
     const rows = [hist({ id: "a", costing_request_id: "x1" }), hist({ id: "b", costing_request_id: "x2" })];
     const sheets = buildComparableSheets(requests, rows, 1);

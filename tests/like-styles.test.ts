@@ -315,12 +315,20 @@ describe("findLikeStyles", () => {
       expect(thin[0].confidence).toBe("low");
     }
 
-    // Rich library: 5+ comparables, full match → high confidence.
+    // Rich library: 5 distinct styles, full match → high confidence. Five
+    // *styles*, not five rows — repeating one style's costing records is a
+    // single comparable.
     {
-      const fiveRows = [rows[0], rows[1], rows[2], { ...rows[1], id: "h4" }, { ...rows[1], id: "h5" }];
+      const fiveStyles = [
+        rows[0],
+        rows[1],
+        rows[2],
+        { ...rows[1], id: "h4", style_number: "M88-400" },
+        { ...rows[1], id: "h5", style_number: "M88-500" }
+      ];
       const { client } = createMockSupabase(responder({
         historical_costings: {
-          select: () => ({ data: fiveRows, error: null })
+          select: () => ({ data: fiveStyles, error: null })
         }
       }));
       mocks.client = client;
@@ -328,6 +336,42 @@ describe("findLikeStyles", () => {
       expect(rich[0].sampleSize).toBe(5);
       expect(rich[0].confidence).toBe("high");
     }
+  });
+
+  it("counts one comparable per style, not per ERP costing record", async () => {
+    // The register imports every costing record of a style (one import run
+    // brought 2.49 records per style). The search must not let one style fill
+    // the list at four prices, nor weigh into the averages several times over.
+    // The pool arrives newest-first, as listHistoricalCostings orders it.
+    const repeated = [
+      { ...rows[1], id: "rev-3", approved_at: "2025-04-10T00:00:00Z", total_cost: 3.4, knitting_time: 0.6 },
+      { ...rows[1], id: "rev-2", approved_at: "2025-03-10T00:00:00Z", total_cost: 3.1, knitting_time: 0.5 },
+      { ...rows[1], id: "rev-1", approved_at: "2025-02-10T00:00:00Z", total_cost: 2.85, knitting_time: 0.4 },
+      { ...rows[0], id: "other", approved_at: "2025-01-10T00:00:00Z" }
+    ];
+    const { client } = createMockSupabase(responder({
+      historical_costings: {
+        select: () => ({ data: repeated, error: null })
+      }
+    }));
+    mocks.client = client;
+
+    const results = await findLikeStyles({ yarnType: "100% Acrylic", knitType: "Jacquard", machineType: "7G" });
+
+    // Four rows, two styles: each style takes one slot.
+    expect(results.map((row) => row.style_number).sort()).toEqual(["M88-100", "M88-200"]);
+    // Evaluated comparables are styles too, not rows.
+    expect(results.every((row) => row.sampleSize === 2)).toBe(true);
+    // The record kept for a style is its newest ERP costing record.
+    const repeatedStyle = results.find((row) => row.style_number === "M88-200")!;
+    expect(repeatedStyle.id).toBe("rev-3");
+    expect(repeatedStyle.total_cost).toBe(3.4);
+
+    // ...and the machine-speed table counts that style once.
+    const summary = summarizeLikeStyleMatches(results);
+    expect(summary.sampleSize).toBe(2);
+    expect(summary.machineSpeeds[0].sampleSize).toBe(2);
+    expect(summary.machineSpeeds[0].avgKnittingTime).toBeCloseTo((0.45 + 0.6) / 2, 6);
   });
 
   it("factors factory, brand, customer, and season into the visible breakdown", async () => {
