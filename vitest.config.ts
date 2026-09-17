@@ -13,6 +13,9 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    exclude: ["tests/e2e", "node_modules/**"]
+    exclude: ["tests/e2e", "node_modules/**"],
+    // Fails a unit test that reaches the live network, so an upstream outage or a
+    // slow ERP can never decide our suite's colour (see tests/setup/network-guard.ts).
+    setupFiles: ["./tests/setup/network-guard.ts"]
   }
 });
