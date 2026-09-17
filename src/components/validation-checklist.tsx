@@ -10,11 +10,23 @@ type ChecklistItem = {
   is_required?: boolean;
 };
 
-export function ValidationChecklist({ requestId, items }: { requestId: string; items: ChecklistItem[] }) {
+export function ValidationChecklist({
+  requestId,
+  items,
+  canEdit
+}: {
+  requestId: string;
+  items: ChecklistItem[];
+  // The checklist IS the Costing validation verdict, so only the lane that owns
+  // the server route (Costing team / admin tier) may tick it. Other internal
+  // roles see the same content read-only.
+  canEdit: boolean;
+}) {
   const [rows, setRows] = useState(items);
   const [message, setMessage] = useState("");
 
   async function save() {
+    if (!canEdit) return;
     setMessage("Saving...");
     const response = await fetch(`/api/costing/requests/${requestId}/checklist`, {
       method: "POST",
@@ -44,9 +56,13 @@ export function ValidationChecklist({ requestId, items }: { requestId: string; i
             {requiredChecked}/{requiredCount} required items checked
           </p>
         </div>
-        <button className="button secondary" type="button" onClick={save}>
-          Save Checklist
-        </button>
+        {canEdit ? (
+          <button className="button secondary" type="button" onClick={save}>
+            Save Checklist
+          </button>
+        ) : (
+          <span className="eyebrow">Read-only — the Costing Team saves this checklist.</span>
+        )}
       </div>
       <div className="checklist">
         {rows.map((row, index) => (
@@ -54,6 +70,7 @@ export function ValidationChecklist({ requestId, items }: { requestId: string; i
             <input
               type="checkbox"
               checked={row.is_checked}
+              disabled={!canEdit}
               onChange={(event) =>
                 setRows((current) =>
                   current.map((item, itemIndex) =>

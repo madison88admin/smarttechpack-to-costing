@@ -88,8 +88,9 @@ export function SampleTrackingPanel({ requestId, canEdit }: { requestId: string;
   const statusColor = (status: string) =>
     status === "approved" ? "text-green" : status === "rejected" ? "text-red" : "text-amber";
 
-  if (loading) return <p className="eyebrow">Loading samples...</p>;
-
+  // The panel renders immediately: the add form is usable before the list has
+  // loaded, and the role boundary is visible in the first paint rather than
+  // behind a "Loading samples..." placeholder that hides the whole panel.
   return (
     <div>
       <h3>Sample Tracking</h3>
@@ -130,7 +131,9 @@ export function SampleTrackingPanel({ requestId, canEdit }: { requestId: string;
         </details>
       ) : null}
 
-      {samples.length === 0 ? (
+      {loading ? (
+        <p className="eyebrow">Loading samples...</p>
+      ) : samples.length === 0 ? (
         <p className="notice">No samples tracked yet for this request.</p>
       ) : (
         <table className="table compact">

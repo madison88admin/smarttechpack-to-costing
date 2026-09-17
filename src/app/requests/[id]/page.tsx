@@ -20,7 +20,7 @@ import { WhatIfAnalyzer } from "@/components/what-if-analyzer";
 import { computeGrossMarginInfo, generateSmartReviewSync } from "@/lib/ai/smart-review";
 import { isHistoricalNextGenStatus, nextGenMetaFromRaw } from "@/lib/nextgen/product-meta";
 import { defaultWorkflowSettings, getWorkflowSettings } from "@/lib/admin/settings";
-import { canRunPbdAction, canRunCostingAction, canRunMdAction, getCurrentRole, getCurrentUserId } from "@/lib/auth/roles";
+import { canDownloadRequestExports, canRunPbdAction, canRunCostingAction, canRunMdAction, getCurrentRole, getCurrentUserId } from "@/lib/auth/roles";
 import { resolveFactoryProfileId } from "@/lib/admin/assignments";
 import { getChecklistResults } from "@/lib/costing/checklist";
 import { tryListChangeRequests } from "@/lib/costing/change-requests";
@@ -551,7 +551,9 @@ export default async function RequestDetailPage({ params }: { params: { id: stri
                         canToggle={canRunCostingAction(role)}
                       />
                     ) : null}
-                    {role !== "factory" ? <ValidationChecklist requestId={params.id} items={checklist} /> : null}
+                    {role !== "factory" ? (
+                      <ValidationChecklist requestId={params.id} items={checklist} canEdit={canRunCostingAction(role)} />
+                    ) : null}
                     {role === "factory" ? (
                       <section className="panel">
                         <h2>Costing Summary</h2>
@@ -749,10 +751,10 @@ export default async function RequestDetailPage({ params }: { params: { id: stri
                     <section className="panel">
                       <h2>Decision history</h2>
                       <ul className="list">
-                        {actions.filter((item) => ["approve", "reject", "manager_approve", "manager_reject", "costing_complete", "md_review", "outlier_acknowledged"].includes(item.action)).map((item) => (
+                        {actions.filter((item) => ["approve", "reject", "costing_complete", "md_review", "outlier_acknowledged"].includes(item.action)).map((item) => (
                           <li key={item.id}><strong>{formatAction(item.action)}</strong><br /><span className="eyebrow">{item.actor_role ?? "System"} · {formatDate(item.created_at)}</span>{item.comment ? <><br />{item.comment}</> : null}</li>
                         ))}
-                        {!actions.some((item) => ["approve", "reject", "manager_approve", "manager_reject", "costing_complete", "md_review"].includes(item.action)) ? <li className="eyebrow">No approval decision recorded yet.</li> : null}
+                        {!actions.some((item) => ["approve", "reject", "costing_complete", "md_review"].includes(item.action)) ? <li className="eyebrow">No approval decision recorded yet.</li> : null}
                       </ul>
                     </section>
                   </div>
@@ -772,7 +774,9 @@ export default async function RequestDetailPage({ params }: { params: { id: stri
                       <CompliancePanel requestId={params.id} canEdit={canRunCostingAction(role)} />
                     </section>
                     <section className="panel">
-                      <SampleTrackingPanel requestId={params.id} canEdit={canRunCostingAction(role)} />
+                      {/* Samples are PBD-owned (the samples route refuses every other
+                          role), so the panel is editable for PBD — not Costing. */}
+                      <SampleTrackingPanel requestId={params.id} canEdit={canRunPbdAction(role)} />
                     </section>
                     {(data?.factory_cbds?.length ?? 0) > 1 ? (
                       <div className="form-actions" style={{ flexDirection: "column", alignItems: "flex-start", gap: 8 }}>
@@ -819,7 +823,7 @@ export default async function RequestDetailPage({ params }: { params: { id: stri
                         ) : null}
                       </div>
                     ) : null}
-                    {(data?.factory_cbds?.length ?? 0) > 0 ? (
+                    {(data?.factory_cbds?.length ?? 0) > 0 && canDownloadRequestExports(role) ? (
                       <div className="form-actions">
                         <Link
                           className="button secondary small-btn"

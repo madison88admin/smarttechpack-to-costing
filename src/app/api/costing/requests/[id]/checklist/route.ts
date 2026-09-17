@@ -1,15 +1,21 @@
 import { NextResponse } from "next/server";
 import { saveChecklistResults } from "@/lib/costing/checklist";
 import { validateRequestId } from "@/lib/api/validate";
-import { getCurrentRole } from "@/lib/auth/roles";
+import { canRunCostingAction, getCurrentRole } from "@/lib/auth/roles";
 
 export async function POST(request: Request, context: { params: { id: string } }) {
   const idError = validateRequestId(context.params.id);
   if (idError) return idError;
 
   const role = getCurrentRole();
-  if (role === "viewer") {
-    return NextResponse.json({ ok: false, error: "Authentication required" }, { status: 401 });
+  // The checklist IS the Costing validation step, so it carries the same
+  // separation of duties as the rest of the lane: Costing team or admin tier
+  // only. Gating on "not viewer" let PBD and MD write costing verdicts.
+  if (!canRunCostingAction(role)) {
+    return NextResponse.json(
+      { ok: false, error: "Costing Team or Admin role required to save the costing checklist" },
+      { status: 403 }
+    );
   }
 
   const body = await request.json().catch(() => null);
