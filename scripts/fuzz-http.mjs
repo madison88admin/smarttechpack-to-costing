@@ -213,6 +213,17 @@ async function warmUp(base, endpoints, token) {
 async function runSinglePass({ base, endpoints, token, label, timeoutMs, concurrency }) {
   await warmUp(base, endpoints, token);
   const probes = buildProbes(base, endpoints, token, timeoutMs);
+  // A pass with nothing to replay would report ALL PASS — the same
+  // green-without-checking shape as a scan that finds no files. The floor lives
+  // here, where the claim is made, so it covers every cause: an empty endpoint
+  // table, `--skip-upstream` removing everything, or a probe builder that stops
+  // producing probes.
+  if (probes.length === 0) {
+    console.log(
+      `FAILED (${label}) — 0 probes: nothing was replayed. Check the endpoint table and --skip-upstream.`
+    );
+    return false;
+  }
   console.log(`Fuzzing ${probes.length} hostile-query probes against ${base} (${label})`);
   const results = await runPool(probes, concurrency, (p) =>
     probe(p.url, p.token, p.slow ? Math.max(p.timeoutMs, 30000) : p.timeoutMs, p.allow)

@@ -147,13 +147,21 @@ function orAllowed(value: string): boolean {
 
 type Site = { file: string; line: number; verb: string; args: string };
 
-export function scanFilterSites(dirs: string[] = SCAN_DIRS): Site[] {
-  const files = dirs.flatMap((dir) => {
+/**
+ * Every file this guard inspects — one owner for "what is scanned", so the
+ * canary below and the verdict above can never disagree about the input.
+ */
+export function scanFiles(dirs: string[] = SCAN_DIRS): string[] {
+  return dirs.flatMap((dir) => {
     const root = join(process.cwd(), dir);
     return (readdirSync(root, { recursive: true }) as string[])
       .filter((name) => name.endsWith(".ts"))
       .map((name) => join(root, name));
   });
+}
+
+export function scanFilterSites(dirs: string[] = SCAN_DIRS): Site[] {
+  const files = scanFiles(dirs);
 
   const sites: Site[] = [];
   for (const file of files) {
@@ -221,6 +229,21 @@ describe("PostgREST filter choke point", () => {
     expect(orAllowed("`a.ilike.${pgrestLike(q)}`")).toBe(true);
     expect(orAllowed("`a.ilike.${q}`")).toBe(false);
     expect(orAllowed('"a.eq.constant"')).toBe(true);
+  });
+
+  // A scan that finds nothing reports no violations — the exact way the
+  // fuzz-table guard passed on Windows for months. A floor on the input is what
+  // deploy-config and migrations-manifest already carry; without it the verdict
+  // test below is unfalsifiable. The classification test above proves the
+  // detector would catch a violation; this proves it was given a tree to check.
+  it("scans a real source tree before the verdict is trusted", () => {
+    const files = scanFiles();
+    expect(files.length, "the scan found almost no files — it is not looking at the source").toBeGreaterThan(100);
+    expect(files.every((file) => file.endsWith(".ts"))).toBe(true);
+    // Both scopes are represented: a scan that quietly dropped src/app/api would
+    // leave every route unguarded while still finding files in src/lib.
+    expect(files.some((file) => file.includes(join("src", "lib"))), "src/lib missing from the scan").toBe(true);
+    expect(files.some((file) => file.includes(join("src", "app", "api"))), "src/app/api missing from the scan").toBe(true);
   });
 
   it("flags no filter sites in the current source (the choke point holds)", () => {
