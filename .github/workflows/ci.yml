@@ -45,8 +45,20 @@ jobs:
       - name: Syntax-check deploy and ops scripts
         run: |
           for script in deploy/*.sh scripts/*.sh; do
-            echo "sh -n $script"
-            sh -n "$script"
+            # Parse each script with the interpreter its shebang declares. `sh -n`
+            # on a `#!/usr/bin/env bash` script is not a weaker check, it is the
+            # wrong one: dash rejects valid bash (arrays, `set -o pipefail`) and
+            # would accept constructs bash refuses. deploy/sync-to-vps.sh is
+            # invoked as `bash deploy/sync-to-vps.sh` (docs/deployment.md), and
+            # this step reported a syntax error in a script that runs correctly.
+            # sh-declared scripts are still checked as POSIX sh, which is how
+            # the VPS cron jobs and rollout actually invoke them.
+            case "$(head -n 1 "$script")" in
+              *bash*) checker="bash -n" ;;
+              *) checker="sh -n" ;;
+            esac
+            echo "$checker $script"
+            $checker "$script"
           done
       # The full gate: lint -> typecheck -> tests -> production build.
       # Mirrors the local `npm run verify` contract exactly.
