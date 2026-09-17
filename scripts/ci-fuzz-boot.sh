@@ -36,7 +36,7 @@ log "== 1/6 database roles and extensions =="
 psql "$DB_URL" -v ON_ERROR_STOP=1 -q <<SQL
 create role anon nologin;
 create role service_role nologin bypassrls;
-create extension if not exists vector;  # schema declares vector(1536); production Supabase ships pgvector
+create extension if not exists vector;  -- schema declares vector(1536); production Supabase ships pgvector
 SQL
 
 log "== 2/6 schema + migrations =="
