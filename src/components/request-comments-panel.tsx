@@ -14,13 +14,17 @@ export function RequestCommentsPanel({ requestId, initialComments, role }: { req
   const [drafts, setDrafts] = useState<Record<RequestCommentType, string>>({ comment: "", buyer_comment: "", factory_comment: "" });
   const [saving, setSaving] = useState<RequestCommentType | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const canWrite = role !== "viewer";
   const types: RequestCommentType[] = role === "factory"
     ? ["comment", "factory_comment"]
     : ["admin", "superadmin"].includes(role)
       ? ["comment", "buyer_comment", "factory_comment"]
-      : ["pbd", "manager"].includes(role)
+      : role === "pbd"
         ? ["comment", "buyer_comment"]
         : ["comment"];
+  // The route refuses the read-only Viewer outright (403), so the panel must not
+  // offer a box whose Save can only fail. The thread stays readable for every
+  // role; only the write affordance follows the route's rule.
 
   async function add(type: RequestCommentType) {
     const note = drafts[type].trim();
@@ -38,9 +42,12 @@ export function RequestCommentsPanel({ requestId, initialComments, role }: { req
   return <section className="panel request-comments-panel">
     <div className="section-heading"><div><p className="eyebrow">Request communication</p><h2>Comments</h2></div><span className="eyebrow">Saved to request audit trail</span></div>
     <p className="eyebrow">Use the right comment type so the next person knows what the note is for.</p>
+    {!canWrite ? <p className="eyebrow">Read-only — your role can read this thread but cannot add comments.</p> : null}
     {types.map(type => <div key={type} className="request-comment-group"><strong>{copy[type].title}</strong><p className="eyebrow">{copy[type].description}</p>
-      <textarea className="input textarea" value={drafts[type]} maxLength={2000} placeholder={`Add ${copy[type].title.toLowerCase()}...`} onChange={e => setDrafts(current => ({ ...current, [type]: e.target.value }))} />
-      <button type="button" className="button secondary btn-sm" onClick={() => add(type)} disabled={saving === type || !drafts[type].trim()}>{saving === type ? "Saving..." : `Save ${copy[type].title}`}</button>
+      {canWrite ? <>
+        <textarea className="input textarea" value={drafts[type]} maxLength={2000} placeholder={`Add ${copy[type].title.toLowerCase()}...`} onChange={e => setDrafts(current => ({ ...current, [type]: e.target.value }))} />
+        <button type="button" className="button secondary btn-sm" onClick={() => add(type)} disabled={saving === type || !drafts[type].trim()}>{saving === type ? "Saving..." : `Save ${copy[type].title}`}</button>
+      </> : null}
       <ul className="list compact-list">{comments.filter(comment => comment.note_type === type).map(comment => <li key={comment.id}><strong>{comment.created_by_role ?? "System"}</strong><span className="eyebrow"> · {new Date(comment.created_at).toLocaleString()}</span><br />{comment.note}</li>)}{!comments.some(comment => comment.note_type === type) ? <li className="eyebrow">No {copy[type].title.toLowerCase()} yet.</li> : null}</ul>
     </div>)}
     {error ? <p className="notice warning-notice">{error}</p> : null}

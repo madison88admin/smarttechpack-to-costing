@@ -3,7 +3,6 @@ import { AppShell } from "@/components/app-shell";
 import { CopyShareLink } from "@/components/copy-share-link";
 import {
   canRunCostingAction,
-  canRunManagerAction,
   canRunMdAction,
   canRunPbdAction,
   getCurrentRole
@@ -25,8 +24,7 @@ export default async function ComparisonSetPage({ params }: { params: { token: s
     role === "admin" ||
     canRunCostingAction(role) ||
     canRunPbdAction(role) ||
-    canRunMdAction(role) ||
-    canRunManagerAction(role);
+    canRunMdAction(role);
   if (!allowed) redirect("/");
 
   const token = (params.token ?? "").trim();

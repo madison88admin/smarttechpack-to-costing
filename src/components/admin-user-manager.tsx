@@ -57,7 +57,6 @@ export function AdminUserManager({ users }: { users: UserProfile[] }) {
           <select id="role" name="role" className="input" defaultValue="viewer">
             <option value="superadmin">Super Admin</option>
             <option value="admin">Admin</option>
-            <option value="manager">Manager</option>
             <option value="pbd">PBD</option>
             <option value="costing">Costing Team</option>
             <option value="factory">Factory</option>
@@ -106,7 +105,6 @@ export function AdminUserManager({ users }: { users: UserProfile[] }) {
                       <select name="role" className="input" defaultValue={user.role}>
                         <option value="superadmin">Super Admin</option>
                         <option value="admin">Admin</option>
-                        <option value="manager">Manager</option>
                         <option value="pbd">PBD</option>
                         <option value="costing">Costing Team</option>
                         <option value="factory">Factory</option>

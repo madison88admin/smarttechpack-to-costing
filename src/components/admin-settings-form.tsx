@@ -27,7 +27,6 @@ export function AdminSettingsForm({ settings }: { settings: WorkflowSettings }) 
         marginThresholdUsd: form.get("marginThresholdUsd"),
         enableEmailNotifications: form.get("enableEmailNotifications") === "on",
         enableTeamsNotifications: form.get("enableTeamsNotifications") === "on",
-        managerApprovalThreshold: form.get("managerApprovalThreshold"),
         enableScheduledReports: form.get("enableScheduledReports") === "on",
         scheduledReportFrequency: form.get("scheduledReportFrequency"),
         scheduledReportHourUtc: form.get("scheduledReportHourUtc"),

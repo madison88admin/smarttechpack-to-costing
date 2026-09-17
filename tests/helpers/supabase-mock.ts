@@ -24,7 +24,8 @@ export type Chain = {
   payload?: unknown;
 };
 
-export type QueryResult = { data: unknown; error: unknown };
+// `count` mirrors the real client's `{ count: "exact" }` head reads.
+export type QueryResult = { data: unknown; error: unknown; count?: number };
 export type Handler = (chain: Chain) => QueryResult;
 export type TableHandlers = Partial<Record<string, Handler>>;
 export type Responder = Record<string, TableHandlers>;

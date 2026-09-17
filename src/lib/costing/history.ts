@@ -80,6 +80,14 @@ export const HISTORICAL_FACET_COLUMNS = [
  */
 const HISTORICAL_COST_COLUMNS = ["landed_cost", "selling_price"] as const;
 
+/**
+ * Safety ceiling for a single register read. PostgREST already pages at 1000
+ * rows, so this only guards against an unbounded request: the export asks for
+ * the register's exact count and refuses loudly above this ceiling instead of
+ * silently shipping a prefix.
+ */
+export const HISTORICAL_READ_MAX_ROWS = 50_000;
+
 /** The shared select list, with the migration-018 cost columns when asked for. */
 function historicalCostingSelect({ withCost = true }: { withCost?: boolean } = {}) {
   return [...HISTORICAL_COSTING_COLUMNS, ...(withCost ? HISTORICAL_COST_COLUMNS : [])].join(", ");
@@ -204,11 +212,16 @@ export async function listHistoricalCostings(input?: string | {
   brand?: string;
   customer?: string;
   season?: string;
+  /** How many rows to read from `offset`. Defaults to the first 500. */
   maxRows?: number;
+  /** Where in the (filtered) register to start — the register pages with this. */
+  offset?: number;
 }) {
   const filters = typeof input === "string" ? { query: input } : input ?? {};
   const supabase = createSupabaseServiceClient();
-  const maxRows = Math.min(Math.max(filters.maxRows ?? 500, 1), 5000);
+  const maxRows = Math.min(Math.max(filters.maxRows ?? 500, 1), HISTORICAL_READ_MAX_ROWS);
+  const start = Math.max(0, filters.offset ?? 0);
+  const end = start + maxRows;
   const rows: HistoricalCostingRow[] = [];
   // PostgREST returns at most 1000 rows per request, so 1000 is the largest
   // page that still fits in one round trip — half the round trips the old
@@ -218,9 +231,14 @@ export async function listHistoricalCostings(input?: string | {
     let request = supabase
       .from("historical_costings")
       .select(columns)
+      // Benchmark-excluded rows are dropped in the query, not after the page was
+      // sliced: the register's offsets and its `countHistoricalCostings` total
+      // then describe the same rows, so "Showing X–Y of N" and the page count
+      // stay true instead of drifting by the excluded rows inside the window.
+      .not("benchmark_excluded", "is", true)
       .order("approved_at", { ascending: false })
       .order("id", { ascending: false })
-      .range(offset, Math.min(offset + pageSize, maxRows) - 1);
+      .range(offset, Math.min(offset + pageSize, end) - 1);
 
     if (filters.query?.trim()) request = request.ilike("searchable_text", pgrestLike(filters.query.trim()));
     if (filters.factory?.trim()) request = request.ilike("factory_name", pgrestLike(filters.factory.trim()));
@@ -230,16 +248,46 @@ export async function listHistoricalCostings(input?: string | {
     return request;
   };
 
-  for (let offset = 0; offset < maxRows; offset += pageSize) {
+  for (let offset = start; offset < end; offset += pageSize) {
   const columns = historicalCostingSelect();
   let { data, error } = await readPage(columns, offset);
   // Migration 018 not applied yet: the pool still loads, minus machine cost.
   if (missingCostColumns(error)) ({ data, error } = await readPage(historicalCostingSelect({ withCost: false }), offset));
   if (error) throw error;
   rows.push(...((data ?? []) as unknown as HistoricalCostingRow[]));
-  if (!data || data.length < Math.min(pageSize, maxRows - offset)) break;
+  if (!data || data.length < Math.min(pageSize, end - offset)) break;
   }
-  return rows.filter((row) => !row.benchmark_excluded);
+  return rows;
+}
+
+/**
+ * How many rows the same filters match, so the register can page instead of
+ * silently showing a prefix of the pool. `benchmark_excluded` rows are left out
+ * the same way listHistoricalCostings drops them (null counts as kept).
+ */
+export async function countHistoricalCostings(input?: {
+  query?: string;
+  factory?: string;
+  brand?: string;
+  customer?: string;
+  season?: string;
+}) {
+  const filters = input ?? {};
+  const supabase = createSupabaseServiceClient();
+  let request = supabase
+    .from("historical_costings")
+    .select("id", { count: "exact", head: true })
+    .not("benchmark_excluded", "is", true);
+
+  if (filters.query?.trim()) request = request.ilike("searchable_text", pgrestLike(filters.query.trim()));
+  if (filters.factory?.trim()) request = request.ilike("factory_name", pgrestLike(filters.factory.trim()));
+  if (filters.brand?.trim()) request = request.ilike("brand", pgrestLike(filters.brand.trim()));
+  if (filters.customer?.trim()) request = request.ilike("customer", pgrestLike(filters.customer.trim()));
+  if (filters.season?.trim()) request = request.ilike("season", pgrestLike(filters.season.trim()));
+
+  const { count, error } = await request;
+  if (error) throw error;
+  return count ?? 0;
 }
 
 export type HistoricalFacetOptions = {

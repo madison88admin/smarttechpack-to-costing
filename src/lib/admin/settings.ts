@@ -21,7 +21,6 @@ export const defaultWorkflowSettings = {
   factorySubmissionSlaDays: 1.5,
   enableEmailNotifications: false,
   enableTeamsNotifications: false,
-  managerApprovalThreshold: 0,
   // Minimum gross margin (USD/unit, wholesale price − landed cost). Falls below
   // this are FLAGGED as a soft warning for the manual Costing ↔ PBD discussion
   // — they never block approval.
@@ -43,10 +42,14 @@ export async function getWorkflowSettings() {
   if (error) throw error;
 
   const stored = data?.value && typeof data.value === "object" ? data.value as Record<string, unknown> : {};
-  return {
-    ...defaultWorkflowSettings,
-    ...stored
-  } as WorkflowSettings;
+  // Only declared keys survive a read. Spreading the stored blob used to carry
+  // whatever an older deploy had written back into the settings object — that is
+  // how a retired key (the manager approval threshold) could keep resurfacing
+  // from the database long after the code stopped using it.
+  const defaults = defaultWorkflowSettings as Record<string, unknown>;
+  return Object.fromEntries(
+    Object.keys(defaultWorkflowSettings).map((key) => [key, key in stored ? stored[key] : defaults[key]])
+  ) as WorkflowSettings;
 }
 
 export async function saveWorkflowSettings(input: Partial<Record<keyof WorkflowSettings, unknown>>) {
@@ -63,7 +66,6 @@ export async function saveWorkflowSettings(input: Partial<Record<keyof WorkflowS
     reminderPercent: Math.min(100, Math.max(1, Math.round(toNumber(input.reminderPercent, defaultWorkflowSettings.reminderPercent)))),
     enableEmailNotifications: input.enableEmailNotifications === true || input.enableEmailNotifications === "true",
     enableTeamsNotifications: input.enableTeamsNotifications === true || input.enableTeamsNotifications === "true",
-    managerApprovalThreshold: 0,
     marginThresholdUsd: toNumber(input.marginThresholdUsd, defaultWorkflowSettings.marginThresholdUsd),
     reminderDays: toNumber(input.reminderDays, defaultWorkflowSettings.reminderDays),
     escalationDays: toNumber(input.escalationDays, defaultWorkflowSettings.escalationDays),

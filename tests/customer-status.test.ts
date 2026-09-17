@@ -166,7 +166,7 @@ describe("PBD role gate (canRunPbdAction)", () => {
   });
 
   it("denies every other role", () => {
-    for (const role of ["costing", "manager", "factory", "md", "viewer"] as const) {
+    for (const role of ["costing", "factory", "md", "viewer"] as const) {
       expect(canRunPbdAction(role), `role: ${role}`).toBe(false);
     }
   });

@@ -1,12 +1,12 @@
 import { listCostingRequests } from "@/lib/costing/requests";
 import { csvResponse, toCsv } from "@/lib/export/csv";
-import { getCurrentRole } from "@/lib/auth/roles";
+import { canDownloadRequestExports, getCurrentRole } from "@/lib/auth/roles";
 
 type RequestExportRow = Awaited<ReturnType<typeof listCostingRequests>>["data"][number];
 
 export async function GET(request: Request) {
   const role = getCurrentRole();
-  if (role === "viewer") {
+  if (!canDownloadRequestExports(role)) {
     return new Response("Unauthorized", { status: 401 });
   }
   const url = new URL(request.url);

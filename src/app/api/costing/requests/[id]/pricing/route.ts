@@ -33,6 +33,13 @@ export async function GET(_request: Request, context: { params: { id: string } }
     .single();
 
   if (error) {
+    // PGRST116 is PostgREST's "no rows" answer to .single(): the request does not
+    // exist, which is a 404 — the sibling [id] routes answer 404 for the same
+    // case, and a 500 here told a caller holding a stale id that the server was
+    // broken.
+    if ((error as { code?: string }).code === "PGRST116") {
+      return NextResponse.json({ ok: false, error: "Request not found" }, { status: 404 });
+    }
     const status = error.message.includes("pbd_pricing") ? 503 : 500;
     return NextResponse.json({ ok: false, error: status === 503 ? "Database migration 002_approval_workflow_alignment.sql is required" : error.message }, { status });
   }
@@ -100,7 +107,7 @@ export async function POST(request: Request, context: { params: { id: string } }
     return NextResponse.json({ ok: false, error: status === 503 ? "Database migration 002_approval_workflow_alignment.sql is required" : error.message }, { status });
   }
   if (!updated) {
-    return NextResponse.json({ ok: false, error: "Pricing can only be entered during PBD or Manager review" }, { status: 409 });
+    return NextResponse.json({ ok: false, error: "Pricing can only be entered during PBD review" }, { status: 409 });
   }
 
   await recordWorkflowEvent(supabase, {

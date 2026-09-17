@@ -3,7 +3,7 @@ import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { pgrestValue } from "@/lib/supabase/filters";
 import { validateRequestId } from "@/lib/api/validate";
 import { csvResponse, toCsv } from "@/lib/export/csv";
-import { getCurrentRole } from "@/lib/auth/roles";
+import { canDownloadRequestExports, getCurrentRole } from "@/lib/auth/roles";
 import { getStatusesForRoles } from "@/lib/costing/requests";
 
 // GET /api/export/cbd-detail.csv?requestId=xxx
@@ -11,7 +11,7 @@ import { getStatusesForRoles } from "@/lib/costing/requests";
 // If no requestId provided, exports all CBDs with their material lines
 export async function GET(request: Request) {
   const role = getCurrentRole();
-  if (role === "viewer") {
+  if (!canDownloadRequestExports(role)) {
     return new Response("Unauthorized", { status: 401 });
   }
   const supabase = createSupabaseServiceClient();

@@ -90,7 +90,6 @@ function responder(overrides: {
       },
       insert: () => ({ data: [], error: null })
     },
-    workflow_settings: { single: () => ({ data: { key: "manager_approval_threshold", value: "15" }, error: null }) },
     factory_cbds: {
       maybeSingle: (chain) =>
         String(chain.select).includes("cbd_material_lines")
@@ -188,10 +187,10 @@ describe("approve — outlier gate before PBD approval", () => {
     mocks.client = client;
 
     const result = await runCostingAction("req-1", "approve", "OK", "pbd");
-    // PBD approve always routes to manager for final approval.
+    // PBD approval is the final internal decision — it terminates the workflow.
     expect(result).toEqual({ status: "approved" });
     expect(updates(calls, "costing_requests")[0]).toMatchObject({ status: "approved" });
-    // No historical costing on intermediate routing — only on manager_approve.
+    // The approved costing is snapshotted to history on that same approval.
     expect(inserts(calls, "historical_costings")).toHaveLength(1);
   });
 
@@ -235,10 +234,10 @@ describe("approve — outlier gate before PBD approval", () => {
     mocks.client = client;
 
     const result = await runCostingAction("req-1", "approve", "Understood", "pbd");
-    // PBD approve always routes to manager for final approval.
+    // PBD approval is the final internal decision — it terminates the workflow.
     expect(result).toEqual({ status: "approved" });
     expect(updates(calls, "costing_requests")[0]).toMatchObject({ status: "approved" });
-    // No historical costing on intermediate routing — only on manager_approve.
+    // The approved costing is snapshotted to history on that same approval.
     expect(inserts(calls, "historical_costings")).toHaveLength(1);
   });
 

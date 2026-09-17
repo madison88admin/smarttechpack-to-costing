@@ -47,7 +47,6 @@ function approveResponder(overrides: Partial<Responder> = {}): Responder {
       maybeSingle: () => ({ data: { metadata: { decision: "pass" } }, error: null }),
       insert: () => ({ data: [], error: null })
     },
-    workflow_settings: { single: () => ({ data: { key: "manager_approval_threshold", value: "15" }, error: null }) },
     factory_cbds: {
       maybeSingle: (chain) =>
         String(chain.select).includes("cbd_material_lines")
@@ -181,18 +180,20 @@ describe("approve — single PBD decision", () => {
     expect(result).toEqual({ status: "approved" });
   });
 
-  it("ignores the retired Manager threshold setting", async () => {
-    const { client, calls } = createMockSupabase(
-      approveResponder({
-        workflow_settings: { single: () => ({ data: { key: "manager_approval_threshold", value: "0" }, error: null }) }
-      })
-    );
+  // Approval has no second gate at any spend: the retired threshold setting is
+  // gone from the code and its workflow_settings row from the database. No
+  // workflow_settings.single handler is registered below, and the shared mock
+  // throws on an unhandled single() read — so reintroducing a threshold lookup
+  // fails here instead of silently routing every approval back for a second look.
+  it("never consults a separate approval-threshold setting", async () => {
+    const { client, calls } = createMockSupabase(approveResponder({}));
     mocks.client = client;
 
     const result = await runCostingAction("req-1", "approve", null, "pbd");
     expect(result).toEqual({ status: "approved" });
 
     expect(inserts(calls, "historical_costings")).toHaveLength(1);
+    expect(calls.filter((call) => call.table === "workflow_settings" && call.terminal === "single")).toEqual([]);
   });
 
   // The historical row is what the Like Styles machine table averages, so the

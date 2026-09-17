@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import {
   canRunCostingAction,
-  canRunManagerAction,
   canRunMdAction,
   canRunPbdAction,
   getCurrentRole
@@ -13,8 +12,7 @@ function canReviewComparisonSets(role: string) {
     role === "admin" ||
     canRunCostingAction(role as never) ||
     canRunPbdAction(role as never) ||
-    canRunMdAction(role as never) ||
-    canRunManagerAction(role as never)
+    canRunMdAction(role as never)
   );
 }
 
@@ -22,7 +20,7 @@ function canReviewComparisonSets(role: string) {
 export async function GET(_request: Request, context: { params: { token: string } }) {
   const role = getCurrentRole();
   if (!canReviewComparisonSets(role)) {
-    return NextResponse.json({ ok: false, error: "Costing, PBD, MD, Manager, or Admin access required" }, { status: 403 });
+    return NextResponse.json({ ok: false, error: "Costing, PBD, MD, or Admin access required" }, { status: 403 });
   }
 
   const token = (context.params.token ?? "").trim();
