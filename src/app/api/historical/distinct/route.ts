@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createStaleWhileRevalidateCache } from "@/lib/cache/stale-while-revalidate";
-import { canAccessInternalCostData, getCurrentRole } from "@/lib/auth/roles";
+import { canAccessHistoricalCostData, getCurrentRole } from "@/lib/auth/roles";
 import { listHistoricalFacetValues, type HistoricalFacetOptions } from "@/lib/costing/history";
 
 export const dynamic = "force-dynamic";
@@ -19,7 +19,9 @@ const facets = createStaleWhileRevalidateCache<HistoricalFacetOptions>({
 
 export async function GET() {
   const role = getCurrentRole();
-  if (!canAccessInternalCostData(role) || role === "viewer") {
+  // Only the Like Styles search calls this, so it is a historical surface: the
+  // rule that owns those (internal minus Viewer), not a hand-rolled copy of it.
+  if (!canAccessHistoricalCostData(role)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 

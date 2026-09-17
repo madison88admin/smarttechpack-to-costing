@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import { canRunCostingAction, canRunPbdAction, getCurrentRole, getRoleLabel, type UserRole } from "@/lib/auth/roles";
+import { canDownloadCostingReports, getCurrentRole, getRoleLabel, type UserRole } from "@/lib/auth/roles";
 import { getReportData, type ReportFilters, type ReportGranularity } from "@/lib/reporting";
 import { tryGetAgingData } from "@/lib/costing/aging";
 import { computeSlaBreakdown } from "@/lib/costing/sla-report";
@@ -7,7 +7,7 @@ import { injectNativeCharts, type NativeChartSheet } from "@/lib/export/inject-c
 
 export async function GET(request: Request) {
   const role = getCurrentRole();
-  const allowed = canRunPbdAction(role) || canRunCostingAction(role);
+  const allowed = canDownloadCostingReports(role);
   if (!allowed) {
     return new Response("Unauthorized", { status: 401 });
   }

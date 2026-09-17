@@ -41,7 +41,13 @@ const nav: NavItem[] = [
   { href: "/production", label: "Production View", icon: IconBox, roles: ["admin", "pbd", "costing", "md", "viewer"], section: "Data" },
   { href: "/reports", label: "Reporting Dashboard", icon: IconChart, roles: ["admin", "pbd", "costing", "md", "viewer"], section: "Data" },
   { href: "/finance", label: "Finance Metrics", icon: IconDollar, roles: ["admin", "pbd", "costing", "md", "viewer"], section: "Data" },
-  { href: "/history", label: "Historical Costing", icon: IconHistory, roles: ["admin", "pbd", "costing", "md", "viewer"], section: "Data" },
+  // The two historical surfaces mirror `canAccessHistoricalCostData` (internal
+  // minus Viewer), which is what their pages, exports and facet dropdown read;
+  // this nav cannot import the predicate (it is a client component and the rule
+  // lives beside next/headers), so tests/nav-role-parity.test.tsx pins these two
+  // entries to that rule instead. Viewer was offered Historical Costing while the
+  // page guard and the export both refused them.
+  { href: "/history", label: "Historical Costing", icon: IconHistory, roles: ["admin", "pbd", "costing", "md"], section: "Data" },
   { href: "/like-styles", label: "Like Styles Search", icon: IconHistory, roles: ["admin", "pbd", "costing", "md"], section: "Data" },
   { href: "/qa", label: "Pilot QA", icon: IconCheck, roles: ["admin", "pbd", "costing", "md"], section: "Quality" },
   { href: "/admin", label: "Admin Settings", icon: IconSettings, roles: ["superadmin", "admin"], section: "System" },
