@@ -132,11 +132,19 @@ function declTiedTo(declaration: string, exports: string[], typeName: string): b
   return false;
 }
 
-function violations(): string[] {
+/**
+ * Every file this guard inspects — one owner for "what is scanned", so the
+ * canary below and the verdict above can never disagree about the input.
+ */
+export function scanFiles(): string[] {
   const root = join(process.cwd(), SCAN_DIR);
-  const files = (readdirSync(root, { recursive: true }) as string[])
+  return (readdirSync(root, { recursive: true }) as string[])
     .filter((name) => name.endsWith(".ts"))
     .map((name) => join(root, name));
+}
+
+function violations(): string[] {
+  const files = scanFiles();
 
   const bad: string[] = [];
   for (const file of files) {
@@ -179,6 +187,18 @@ describe("vocabulary choke point", () => {
     expect(declTiedTo("const TRACKED: CostingStatus[] = [\"draft\"];", STATUS_EXPORTS, "CostingStatus")).toBe(true);
     expect(declTiedTo("const ACTIVE = [\"draft\", \"approved\"];", STATUS_EXPORTS, "CostingStatus")).toBe(false);
     expect(declTiedTo("const X = otherStatuses;", STATUS_EXPORTS, "CostingStatus")).toBe(false);
+  });
+
+  // A scan that finds nothing reports no violations, so the verdict below needs
+  // an input floor to mean anything — the same defence deploy-config and
+  // migrations-manifest already carry, and the one the fuzz-table guard lacked.
+  it("scans a real source tree before the verdict is trusted", () => {
+    const files = scanFiles();
+    expect(files.length, "the scan found almost no files — it is not looking at the source").toBeGreaterThan(50);
+    expect(files.every((file) => file.endsWith(".ts"))).toBe(true);
+    // The canonical owner itself must be inside the scan, or the guard would
+    // report a clean tree while exempting the file it exists to police.
+    expect(files.some((file) => file.includes(join("workflow", "status.ts"))), "status.ts missing from the scan").toBe(true);
   });
 
   it("flags no vocabulary re-declarations in the current source", () => {
