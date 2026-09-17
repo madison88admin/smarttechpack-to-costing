@@ -70,7 +70,7 @@ log "  PostgREST up on :${PGREST_PORT}"
 
 log "== 4/6 /rest/v1 proxy + service-role JWT =="
 SERVICE_JWT="$(cd "$ROOT" && node --input-type=module -e \
-  "import {mintToken} from './scripts/fuzz-http.mjs'; console.log(mintToken('${JWT_SECRET}', 'service_role'))")"
+  "import {mintJwt} from './scripts/fuzz-http.mjs'; console.log(mintJwt('${JWT_SECRET}', 'service_role'))")"
 POSTGREST_UPSTREAM="http://127.0.0.1:${PGREST_PORT}" PORT="${PROXY_PORT}" node "$ROOT/scripts/ci-rest-proxy.mjs" > /tmp/tp-fuzz-proxy.log 2>&1 &
 PIDS+=($!)
 sleep 1
@@ -98,7 +98,17 @@ for _ in $(seq 1 90); do
   sleep 1
 done
 curl -sf -o /dev/null "${APP_URL}/api/health" || {
-  echo "[boot] app failed to start — log tail:"; tail -50 /tmp/tp-fuzz-app.log; exit 1;
+  # The health route reports which dependency is down; print the body plus a
+  # direct PostgREST read with the same service JWT, so a boot failure says
+  # whether it is the app, the proxy, the JWT, or a missing grant.
+  echo "[boot] health is not ok — body:"
+  curl -s "${APP_URL}/api/health"; echo
+  echo "[boot] direct PostgREST read with the service JWT:"
+  curl -s -w "\n  http_status=%{http_code}\n" -H "Authorization: Bearer ${SERVICE_JWT}" \
+    "http://127.0.0.1:${PGREST_PORT}/costing_requests?select=id&limit=1" | head -c 500
+  echo "[boot] PostgREST log tail:"; tail -20 /tmp/tp-fuzz-postgrest.log
+  echo "[boot] app log tail:"; tail -30 /tmp/tp-fuzz-app.log
+  exit 1
 }
 log "  app up on ${APP_URL}"
 

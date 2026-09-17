@@ -107,6 +107,25 @@ export function mintToken(secret, role) {
   return `${payload}.${sig}`;
 }
 
+// PostgREST authenticates with a real JWT (header.payload.signature) carrying a
+// `role` claim. mintToken above is the app's own 2-part session-cookie scheme, so
+// a service-role key for PostgREST needs its own signer — using mintToken there
+// produced a key PostgREST rejects, which 401'd every query in the CI boot.
+export function mintJwt(secret, role, ttlSeconds = 60 * 60 * 8) {
+  const now = Math.floor(Date.now() / 1000);
+  const header = base64Url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
+  const payload = base64Url(
+    JSON.stringify({
+      role,
+      iss: "supabase",
+      iat: now,
+      exp: now + ttlSeconds
+    })
+  );
+  const sig = createHmac("sha256", secret).update(`${header}.${payload}`).digest("base64url");
+  return `${header}.${payload}.${sig}`;
+}
+
 async function probe(url, token, timeoutMs, allow) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);

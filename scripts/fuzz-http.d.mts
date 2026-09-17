@@ -20,6 +20,12 @@ export const ENDPOINTS: EndpointSpec[];
 
 export function mintToken(secret: string, role: string): string;
 
+/**
+ * Real HS256 JWT (header.payload.signature) for PostgREST, which rejects the
+ * 2-part mintToken cookie format. Used as the CI service-role key.
+ */
+export function mintJwt(secret: string, role: string, ttlSeconds?: number): string;
+
 export type ProbeSpec = {
   url: string;
   label: string;
