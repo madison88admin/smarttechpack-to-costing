@@ -4,7 +4,7 @@ import { BulkActions } from "@/components/bulk-actions";
 import { RequestTable } from "@/components/request-table";
 import { SearchableFilter } from "@/components/searchable-filter";
 import { StatusPill } from "@/components/status-pill";
-import { canRunCostingAction, canRunPbdAction, getCurrentRole, getCurrentUserId, getRoleLabel } from "@/lib/auth/roles";
+import { canDownloadRequestExports, canRunCostingAction, canRunPbdAction, getCurrentRole, getCurrentUserId, getRoleLabel } from "@/lib/auth/roles";
 import { listScopedRequestPage, REQUEST_PAGE_SIZE } from "@/lib/costing/request-listing";
 import { getUnreadInAppAlerts } from "@/lib/notifications/in-app";
 import { getAgingSummary, tryGetAgingData } from "@/lib/costing/aging";
@@ -95,6 +95,11 @@ export default async function RequestsPage({
   const unreadAlerts = await getUnreadInAppAlerts(role).catch(() => ({ alerts: [], totalUnread: 0, perRequest: {} as Record<string, number> }));
   const unreadCounts = unreadAlerts.perRequest;
 
+  // The queue's downloads follow the endpoints' own rule (`canDownloadRequestExports`),
+  // so Viewer is never offered a link that would answer 401. Factory keeps its
+  // downloads on the Factory view, so the queue panel stays link-free for it.
+  const canDownloadQueueExports = canDownloadRequestExports(role) && role !== "factory";
+
   return (
     <AppShell>
       <div className="dashboard-page">
@@ -124,12 +129,12 @@ export default async function RequestsPage({
             </div>
             <div className="section-heading-right">
               <span className={`status ${error ? "red" : "green"}`}>{error ? "Data Unavailable" : "Live Data"}</span>
-              {role !== "factory" ? (
+              {canDownloadQueueExports ? (
                 <Link className="button secondary btn-sm" href={exportHref}>
                   <IconDownload size={14} /> Export CSV
                 </Link>
               ) : null}
-              {role !== "factory" ? (
+              {canDownloadQueueExports ? (
                 <Link className="button secondary btn-sm" href="/api/export/cbd-detail.csv">
                   <IconDownload size={14} /> CBD Detail
                 </Link>
