@@ -137,7 +137,10 @@ async function probe(url, token, timeoutMs, allow) {
       signal: controller.signal
     });
     const allowed = allow?.includes(res.status) ?? false;
-    return { ok: res.status < 500 || allowed, status: res.status, ms: Date.now() - started, url, kind: res.status >= 500 && !allowed ? "http>=500" : "http" };
+    const failed = res.status >= 500 && !allowed;
+    // A 500 without its message is undiagnosable from CI, so keep the body.
+    const body = failed ? (await res.text().catch(() => "")).replace(/\s+/g, " ").slice(0, 300) : undefined;
+    return { ok: !failed, status: res.status, ms: Date.now() - started, url, kind: failed ? "http>=500" : "http", body };
   } catch (error) {
     return {
       ok: false,
@@ -219,6 +222,7 @@ async function runSinglePass({ base, endpoints, token, label, timeoutMs, concurr
 
   for (const f of failures.slice(0, 20)) {
     console.log(`  FAIL [${f.kind}${f.status ? ` ${f.status}` : ""} in ${f.ms}ms] ${f.label}${f.error ? ` — ${f.error}` : ""}`);
+    if (f.body) console.log(`       body: ${f.body}`);
   }
   if (failures.length > 20) console.log(`  …and ${failures.length - 20} more failures`);
 
