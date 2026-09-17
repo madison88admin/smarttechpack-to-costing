@@ -1,4 +1,4 @@
-import { canRunCostingAction, canRunPbdAction, getCurrentRole } from "@/lib/auth/roles";
+import { canDownloadCostingReports, getCurrentRole } from "@/lib/auth/roles";
 import { csvResponse } from "@/lib/export/csv";
 import { registerCsv } from "@/lib/export/register";
 import { getReportData, normalizeRegisterSort, sortReportRows, type ReportFilters, type ReportGranularity } from "@/lib/reporting";
@@ -10,7 +10,7 @@ import { getReportData, normalizeRegisterSort, sortReportRows, type ReportFilter
  */
 export async function GET(request: Request) {
   const role = getCurrentRole();
-  const allowed = canRunPbdAction(role) || canRunCostingAction(role);
+  const allowed = canDownloadCostingReports(role);
   if (!allowed) {
     return new Response("Unauthorized", { status: 401 });
   }

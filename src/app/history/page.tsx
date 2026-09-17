@@ -2,7 +2,7 @@ import { AppShell } from "@/components/app-shell";
 import { HistoryTable } from "@/components/history-table";
 import { countHistoricalCostings, tryListHistoricalCostings } from "@/lib/costing/history";
 import Link from "next/link";
-import { canAccessInternalCostData, getCurrentRole } from "@/lib/auth/roles";
+import { canAccessHistoricalCostData, getCurrentRole } from "@/lib/auth/roles";
 import { redirect } from "next/navigation";
 
 /** Rows rendered per page. The RegisterTable is heavy, so keep pages modest. */
@@ -13,7 +13,11 @@ export default async function HistoryPage({
 }: {
   searchParams?: { q?: string; factory?: string; brand?: string; customer?: string; season?: string; page?: string };
 }) {
-  if (!canAccessInternalCostData(getCurrentRole())) redirect("/");
+  // The register is a historical surface, so its guard is the rule that owns
+  // those (internal minus Viewer) — the same one /api/export/history.csv reads.
+  // Gating on the broader internal rule here let Viewer read the page and be
+  // offered its Export CSV link while the export itself answered 403.
+  if (!canAccessHistoricalCostData(getCurrentRole())) redirect("/");
   const query = searchParams?.q ?? "";
   const factory = searchParams?.factory ?? "";
   const brand = searchParams?.brand ?? "";

@@ -95,10 +95,11 @@ export default async function RequestsPage({
   const unreadAlerts = await getUnreadInAppAlerts(role).catch(() => ({ alerts: [], totalUnread: 0, perRequest: {} as Record<string, number> }));
   const unreadCounts = unreadAlerts.perRequest;
 
-  // The queue's downloads follow the endpoints' own rule (`canDownloadRequestExports`),
-  // so Viewer is never offered a link that would answer 401. Factory keeps its
-  // downloads on the Factory view, so the queue panel stays link-free for it.
-  const canDownloadQueueExports = canDownloadRequestExports(role) && role !== "factory";
+  // The queue's downloads follow the endpoints' own rule
+  // (canDownloadRequestExports), so a link the page shows can never answer 401
+  // behind it. That rule already excludes Factory, which keeps its downloads on
+  // the Factory view, so the queue panel stays link-free for it.
+  const canDownloadQueueExports = canDownloadRequestExports(role);
 
   return (
     <AppShell>

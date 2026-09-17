@@ -1,6 +1,6 @@
 import * as XLSX from "xlsx";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
-import { canRunCostingAction, canRunPbdAction, getCurrentRole } from "@/lib/auth/roles";
+import { canDownloadCostingReports, getCurrentRole } from "@/lib/auth/roles";
 import { listHistoricalCostings } from "@/lib/costing/history";
 import { buildComparableSheets, extractLikeStyleAttributes } from "@/lib/export/comparable";
 import { buildRegisterExportRows, REGISTER_EXPORT_HEADERS } from "@/lib/export/register";
@@ -15,7 +15,7 @@ import { getReportData, normalizeRegisterSort, sortReportRows, type ReportFilter
  */
 export async function GET(request: Request) {
   const role = getCurrentRole();
-  const allowed = canRunPbdAction(role) || canRunCostingAction(role);
+  const allowed = canDownloadCostingReports(role);
   if (!allowed) {
     return new Response("Unauthorized", { status: 401 });
   }

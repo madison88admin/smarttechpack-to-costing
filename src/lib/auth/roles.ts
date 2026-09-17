@@ -114,23 +114,38 @@ export function canAccessInternalCostData(role: UserRole) {
   return (allRoles.filter((r) => r !== "factory") as UserRole[]).includes(role);
 }
 
-// Historical costing and like-style surfaces: the internal cost data minus the
-// read-only Viewer role. Derived from canAccessInternalCostData so a new role
-// inherits the boundary, and every route and page that gates on it reads the
-// same rule instead of re-listing roles (the Like Styles search, its exports,
-// the history exports and the historical facet dropdowns had drifted apart).
+// Historical costing and Like Styles: the internal cost data minus the read-only
+// Viewer role. ONE owner for those surfaces — the history page, the Like Styles
+// page, their exports and the facet dropdown they share all read this rule.
+// Derived from canAccessInternalCostData so a new role inherits the boundary.
+//
+// The rule fell apart when surfaces re-listed roles or reached for the broader
+// predicate: the history page admitted Viewer while its own export refused them,
+// and the facet dropdown (which only the Like Styles search calls) did the same.
+// If a new historical surface appears, call this — do not re-list roles.
 export function canAccessHistoricalCostData(role: UserRole) {
   return canAccessInternalCostData(role) && role !== "viewer";
 }
 
 // Download endpoints that list requests or their CBD detail
-// (`/api/export/requests.csv`, `/api/export/cbd-detail.csv`) refuse the read-only
-// Viewer and scope every other role to the rows that role can already see. The
-// list page reads this same rule, so a link it shows can never disagree with the
-// endpoint behind it — previously the page offered Viewer two downloads that
-// both answered 401.
+// (`/api/export/requests.csv`, `/api/export/cbd-detail.csv`). They take the same
+// boundary as every other internal cost-data surface — Factory never receives
+// internal request/cost rows and the read-only Viewer never extracts them — so
+// this reads that one rule rather than hand-rolling `role !== "viewer"`, which
+// admitted Factory at the route and left the middleware as the only thing
+// refusing it.
 export function canDownloadRequestExports(role: UserRole) {
-  return role !== "viewer";
+  return canAccessHistoricalCostData(role);
+}
+
+// Report and register downloads (`/api/export/report.{csv,xlsx}` and
+// `/api/export/register.{csv,xlsx}`) are a lane capability, not a read-only one:
+// the PBD and Costing lanes plus the admin tier. The reporting page's export
+// buttons read this same rule, so MD and Viewer — who may read the report but
+// were never allowed to download it — are no longer offered a button that
+// answers 401.
+export function canDownloadCostingReports(role: UserRole) {
+  return canRunPbdAction(role) || canRunCostingAction(role);
 }
 
 // Super Admin only — system maintenance (sync, import, escalation triggers)

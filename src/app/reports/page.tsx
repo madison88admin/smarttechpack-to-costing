@@ -6,7 +6,7 @@ import { HBarChart } from "@/components/charts";
 import { PaginatedHBarChart } from "@/components/paginated-hbar-chart";
 import { SearchableFilter } from "@/components/searchable-filter";
 import { IconDownload, IconX } from "@/components/ui/icons";
-import { canAccessInternalCostData, getCurrentRole } from "@/lib/auth/roles";
+import { canAccessInternalCostData, canDownloadCostingReports, getCurrentRole } from "@/lib/auth/roles";
 import { tryGetReportData, type ReportFilters } from "@/lib/reporting";
 import { tryGetNextGenFilterOptions } from "@/lib/nextgen/filter-options";
 import { statusLabels } from "@/lib/workflow/status";
@@ -36,6 +36,11 @@ export default async function ReportsPage({
   if (!canView) {
     redirect("/");
   }
+  // Reading the report is an internal-dashboard right; downloading it is a lane
+  // right. Both export routes gate on canDownloadCostingReports, so the buttons
+  // read that same rule — MD and Viewer could read this page and were offered
+  // downloads that answered 401.
+  const canExport = canDownloadCostingReports(role);
 
   const filters: ReportFilters = {
     factory: searchParams?.factory?.trim() || null,
@@ -143,13 +148,17 @@ export default async function ReportsPage({
           {r ? <span className="report-source-badge">Live data · {r.dataSource} · Refreshed {formatDateTime(r.generatedAt)}</span> : null}
         </div>
         <div className="hero-actions">
-          <Link className="button secondary" href={excelHref}>
-            <IconDownload size={14} /> Export Excel
-          </Link>
+          {canExport ? (
+            <Link className="button secondary" href={excelHref}>
+              <IconDownload size={14} /> Export Excel
+            </Link>
+          ) : null}
           <PrintButton label="Export PDF" />
-          <Link className="button secondary btn-sm" href={csvHref}>
-            <IconDownload size={14} /> CSV
-          </Link>
+          {canExport ? (
+            <Link className="button secondary btn-sm" href={csvHref}>
+              <IconDownload size={14} /> CSV
+            </Link>
+          ) : null}
         </div>
       </div>
 
