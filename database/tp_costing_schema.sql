@@ -269,6 +269,32 @@ create unique index if not exists costing_requests_active_style_factory_season_u
   on tp_costing.costing_requests(product_id, lower(coalesce(factory_name, '')), lower(coalesce(season, '')))
   where status not in ('approved', 'rejected');
 
+-- A costing note can be written about a historical style (costing_notes is
+-- created above, before this table exists, so the key is added here). The notes
+-- search embeds those style attributes — yarn/knit/machine — and PostgREST only
+-- resolves an embed through a real foreign key; without it the whole select is
+-- rejected and the search 500s. NOT VALID so a database that already carries
+-- orphan ids is not blocked.
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint c
+    join pg_class t on t.oid = c.conrelid
+    join pg_namespace n on n.oid = t.relnamespace
+    where n.nspname = 'tp_costing'
+      and t.relname = 'costing_notes'
+      and c.contype = 'f'
+      and c.conkey = array[
+        (select a.attnum from pg_attribute a where a.attrelid = t.oid and a.attname = 'historical_costing_id')
+      ]
+  ) then
+    alter table tp_costing.costing_notes
+      add constraint costing_notes_historical_costing_id_fkey
+      foreign key (historical_costing_id) references tp_costing.historical_costings(id) on delete set null not valid;
+  end if;
+end $$;
+
 -- Comparative style review tracking (BR-005)
 create table if not exists tp_costing.style_comparisons (
   id uuid primary key default gen_random_uuid(),
