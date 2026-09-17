@@ -8,10 +8,26 @@
 // Cleans up every created request via the service role afterwards.
 //
 // Usage: node scripts/e2e-reject-clarify-deep.mjs [baseUrl]
+//
+// The database it writes to is resolved, never inherited from the app's own
+// configuration (which points at production here): TP_E2E_REST names it, the
+// default is the local PostgREST, and a non-loopback target needs
+// TP_E2E_ALLOW_LIVE_DB=1.
 
 import { readFileSync, existsSync } from "node:fs";
 import { mintCookie } from "./mint-cookie.mjs";
-import { beginDriverRun } from "./lib/driver-guard.mjs";
+import { beginDriverRun, exitCleanly } from "./lib/driver-guard.mjs";
+import { resolveRestTarget } from "./lib/rest-target.mjs";
+
+// Refuse an unsafe database before anything else happens — before the service
+// key is read, and long before a row is written.
+let target;
+try {
+  target = resolveRestTarget({ usage: "node scripts/e2e-reject-clarify-deep.mjs [baseUrl]" });
+} catch (error) {
+  console.error(`\n${error.message}\n`);
+  await exitCleanly(3);
+}
 
 const BASE = process.argv[2] ?? "http://localhost:3120";
 
@@ -37,7 +53,7 @@ function loadEnvKey(name, files) {
   throw new Error(`${name} not found`);
 }
 const SERVICE_KEY = loadEnvKey("SUPABASE_SERVICE_ROLE_KEY", [".env.local", ".env"]);
-const PGREST = new URL("http://5.223.78.194:8000/rest/v1");
+const PGREST = target.rest;
 
 async function api(path, { method = "GET", role, body, expect } = {}) {
   const headers = {};
@@ -57,13 +73,13 @@ async function api(path, { method = "GET", role, body, expect } = {}) {
 }
 
 async function db(path) {
-  const res = await fetch(`${PGREST.href}${path}`, {
+  const res = await fetch(`${PGREST}${path}`, {
     headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}`, "Accept-Profile": "tp_costing" }
   });
   return res.json();
 }
 async function del(table, filter) {
-  const res = await fetch(`${PGREST.href}/${table}?${filter}`, {
+  const res = await fetch(`${PGREST}/${table}?${filter}`, {
     method: "DELETE",
     headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}`, "Content-Profile": "tp_costing", Prefer: "return=minimal" }
   });
@@ -231,6 +247,7 @@ async function main() {
   // Refuses to run over a previous run's leftovers; owns cleanup for every
   // exit path (finish, crash, Ctrl+C, closed stdout).
   run = await beginDriverRun({ name: "e2e-reject-clarify-deep", marker: MARKER, rest: PGREST, headers: DB_HEADERS });
+  console.log(`direct database: ${PGREST}${target.live ? "  (NON-LOCAL — TP_E2E_ALLOW_LIVE_DB=1 acknowledged)" : "  (local)"}`);
   const created = [];
   run.track(async () => {
     for (const entry of created) await cleanup(entry.id, entry.styleNumber);
