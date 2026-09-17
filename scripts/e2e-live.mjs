@@ -12,6 +12,7 @@
 
 import { readFileSync, existsSync } from "node:fs";
 import { mintCookie } from "./mint-cookie.mjs";
+import { beginDriverRun } from "./lib/driver-guard.mjs";
 
 const BASE = process.argv[2] ?? "http://localhost:3120";
 
@@ -92,6 +93,44 @@ function check(name, pass, detail = "") {
   console.log(`${pass ? "PASS" : "FAIL"}  ${name}${detail ? ` — ${detail}` : ""}`);
 }
 
+// Every row this run creates carries this marker, so an interrupted run is
+// findable and the guard can refuse to start on a previous run's leftovers.
+const MARKER = "E2E-LIVE";
+const DB_HEADERS = {
+  apikey: SERVICE_KEY,
+  Authorization: `Bearer ${SERVICE_KEY}`,
+  "Accept-Profile": "tp_costing",
+  "Content-Profile": "tp_costing"
+};
+const run = await beginDriverRun({ name: "e2e-live", marker: MARKER, rest: PGREST, headers: DB_HEADERS });
+const createdRequests = [];
+
+/** Deletes one request and its children; safe to call on any exit path. */
+async function cleanup(requestId) {
+  if (!requestId) return;
+  for (const table of [
+    "customer_approval_attachments",
+    "customer_revision_history",
+    "checklist_results",
+    "approval_actions",
+    "workflow_events",
+    "cbd_material_lines",
+    "factory_cbds",
+    "historical_costings",
+    "costing_requests"
+  ]) {
+    try {
+      const filter = table === "costing_requests" ? `id=eq.${requestId}` : `costing_request_id=eq.${requestId}`;
+      await del(table, filter);
+    } catch {
+      /* best-effort */
+    }
+  }
+}
+run.track(async () => {
+  for (const entry of createdRequests) await cleanup(entry.id);
+});
+
 // ── 1. Auth boundary ──────────────────────────────────────────────────────────
 await api("/api/costing/requests", { expect: 401 });
 await api("/api/costing/requests", { role: "viewer", expect: 200 });
@@ -112,13 +151,15 @@ const created = await api("/api/costing/requests", {
     season: "E2E",
     brand: "E2E Brand",
     customer: "E2E Customer",
-    notes: "Created by automated final E2E test pass"
+    notes: `Created by automated final E2E test pass [${MARKER}]`
   },
   expect: 201
 });
 const requestId = created.json?.data?.id;
+createdRequests.push({ id: requestId, styleNumber });
 check("PBD creates request", Boolean(requestId), requestId ? styleNumber : "no id returned");
-if (!requestId) process.exit(1);
+// Throw rather than exit: the guard turns this into a cleaned-up failure.
+if (!requestId) throw new Error("request creation returned no id");
 
 // ── 3. Send to factory ────────────────────────────────────────────────────────
 await api(`/api/costing/requests/${requestId}/actions`, { method: "POST", role: "viewer", body: { action: "send_to_factory" }, expect: 403 });
@@ -140,7 +181,7 @@ const assignedProfile =
   reqRow?.assigned_factory_user_id === PROFILES.factoryA.sub ? "factoryA" :
   reqRow?.assigned_factory_user_id === PROFILES.factoryB.sub ? "factoryB" : null;
 check("request auto-assigned to an active factory profile", Boolean(assignedProfile), String(reqRow?.assigned_factory_user_id));
-if (!assignedProfile) process.exit(1);
+if (!assignedProfile) throw new Error("request was not auto-assigned to an active factory profile");
 const rogue = assignedProfile === "factoryA" ? "factoryB" : "factoryA";
 console.log(`       → assigned: ${assignedProfile}, rogue for negative tests: ${rogue}`);
 
@@ -264,25 +305,8 @@ await api("/api/costing/requests/not-a-uuid", { role: "pbd", expect: 404 });
 const factoryHistory = await api("/api/historical/search?q=shirt", { role: "factoryA" });
 check("factory blocked from historical costing", factoryHistory.status === 403 || factoryHistory.status === 404, String(factoryHistory.status));
 
-// ── Cleanup ───────────────────────────────────────────────────────────────────
-for (const table of [
-  "customer_approval_attachments",
-  "customer_revision_history",
-  "checklist_results",
-  "approval_actions",
-  "workflow_events",
-  "cbd_material_lines",
-  "factory_cbds",
-  "historical_costings",
-  "costing_requests"
-]) {
-  try {
-    const filter = table === "costing_requests" ? `id=eq.${requestId}` : `costing_request_id=eq.${requestId}`;
-    await del(table, filter);
-  } catch {
-    /* best-effort */
-  }
-}
+// ── Cleanup (through the guard, so interrupts take the same path) ────────────
+await run.finish();
 try {
   await del("nextgen_products", `style_number=eq.${styleNumber}`);
 } catch {
@@ -290,6 +314,8 @@ try {
 }
 const [leftover] = await db(`/costing_requests?select=id&id=eq.${requestId}`);
 check("test request cleaned up", !leftover);
+const marked = await run.leftovers();
+check("no marked rows left behind", marked.length === 0, `marker=${MARKER} rows=${marked.length}`);
 
 // ── Report ────────────────────────────────────────────────────────────────────
 const failed = results.filter((r) => !r.pass);

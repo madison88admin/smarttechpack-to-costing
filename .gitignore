@@ -34,3 +34,6 @@ cookies-*.txt
 
 # Pre-wipe JSON snapshots of the live database — never commit
 backups/
+
+# Playwright run artifacts
+test-results/
