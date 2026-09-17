@@ -34,7 +34,6 @@ export default function LoginPage() {
             />
             <span className="login-secure-pill"><span aria-hidden="true">*</span> Secure access</span>
           </div>
-          <p className="eyebrow">Costing Approval Platform</p>
           <h1>Welcome back</h1>
           <p className="login-subtitle">Sign in to continue to your costing workspace.</p>
           <LoginForm />
@@ -42,6 +41,7 @@ export default function LoginPage() {
             <strong>Need access?</strong>
             <span>Contact the Smart TP Costing system administrator to activate your account and assign a role.</span>
           </div>
+          <p className="login-footer">Last security update: September 2026 · Issues? <a href="https://m88itsm.netlify.app/login" target="_blank" rel="noreferrer">Report to ITSM</a></p>
         </section>
       </section>
     </main>

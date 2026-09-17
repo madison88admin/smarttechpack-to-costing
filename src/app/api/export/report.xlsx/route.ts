@@ -24,7 +24,7 @@ export async function GET(request: Request) {
     ["Metric", "Value"],
     ["Total Requests", data.totalRequests],
     ["Active Requests", data.activeRequests],
-    ["In Review (MD/Costing/PBD/Manager)", data.inReviewCount],
+    ["In Internal Review (MD / Costing / PBD)", data.inReviewCount],
     ["Needs Clarification", data.needsClarificationCount],
     ["Approved", data.approvedCount],
     ["Rejected", data.rejectedCount],

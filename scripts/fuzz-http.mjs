@@ -81,8 +81,7 @@ export const ENDPOINTS = [
   { path: "/api/nextgen/po/search", role: "pbd", params: ["q"], allow: [502, 503, 504], slow: true, requiresUpstream: true },
   { path: "/api/product/search", role: "pbd", params: ["q"], allow: [502, 503, 504], slow: true, requiresUpstream: true },
   { path: "/api/historical/like-styles", role: "pbd", params: ["limit", "minScore", "yarnType", "knitType", "machineType", "construction", "category", "factory", "brand", "customer", "season", "notes"] },
-  { path: "/api/historical/search", role: "pbd", params: ["brand", "customer", "factory", "limit", "q", "season"] },
-  { path: "/api/material-library", role: "pbd", params: ["category", "q"] }
+  { path: "/api/historical/search", role: "pbd", params: ["brand", "customer", "factory", "limit", "q", "season"] }
 ];
 
 const FAKE_ID = "00000000-0000-4000-8000-000000000000";

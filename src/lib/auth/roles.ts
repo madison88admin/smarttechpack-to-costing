@@ -104,17 +104,7 @@ export function canAccessAdmin(role: UserRole) {
   return isAdminTier(role);
 }
 
-// Costing + PBD + Admin tier can manage material library
-export function canManageMaterialLibrary(role: UserRole) {
-  return isAdminTier(role) || role === "pbd" || role === "costing";
-}
-
 // Super Admin only — user management, system maintenance, role assignment
-// MD, Costing, PBD, and Admin tier curate master benchmark reference prices.
-export function canCurateMasterBenchmarks(role: UserRole) {
-  return isAdminTier(role) || role === "md" || role === "costing" || role === "pbd";
-}
-
 export function canManageUsers(role: UserRole) {
   return role === "superadmin";
 }
@@ -127,6 +117,15 @@ export function canAccessInternalCostData(role: UserRole) {
   // Every role except Factory — derived from allRoles so a new role inherits
   // the boundary (Factory is the only role that must never see internal costs).
   return (allRoles.filter((r) => r !== "factory") as UserRole[]).includes(role);
+}
+
+// Historical costing and like-style surfaces: the internal cost data minus the
+// read-only Viewer role. Derived from canAccessInternalCostData so a new role
+// inherits the boundary, and every route and page that gates on it reads the
+// same rule instead of re-listing roles (the Like Styles search, its exports,
+// the history exports and the historical facet dropdowns had drifted apart).
+export function canAccessHistoricalCostData(role: UserRole) {
+  return canAccessInternalCostData(role) && role !== "viewer";
 }
 
 // Super Admin only — system maintenance (sync, import, escalation triggers)

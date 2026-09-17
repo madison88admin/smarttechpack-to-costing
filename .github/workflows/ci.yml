@@ -20,6 +20,15 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm audit --omit=dev --audit-level=high
+      # Ops scripts run only on the VPS, where a syntax error is discovered at
+      # 02:00 by a cron job that silently fails. Parse them here instead. The
+      # backup script's behavior is covered by tests/backup-script.test.ts.
+      - name: Syntax-check deploy and ops scripts
+        run: |
+          for script in deploy/*.sh scripts/*.sh; do
+            echo "sh -n $script"
+            sh -n "$script"
+          done
       # The full gate: lint -> typecheck -> tests -> production build.
       # Mirrors the local `npm run verify` contract exactly.
       - run: npm run verify

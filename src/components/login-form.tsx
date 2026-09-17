@@ -8,8 +8,15 @@ export function LoginForm() {
   const router = useRouter();
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [fieldError, setFieldError] = useState("");
 
   async function login(formData: FormData) {
+    const username = String(formData.get("username") ?? "").trim();
+    const password = String(formData.get("password") ?? "");
+    if (!username || !/^\S+@\S+\.\S+$/.test(username)) { setFieldError("Enter a valid email address."); return; }
+    if (!password) { setFieldError("Enter your password."); return; }
+    setFieldError("");
     setBusy(true);
     setMessage("Signing in...");
     try {
@@ -17,14 +24,14 @@ export function LoginForm() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          username: String(formData.get("username") ?? ""),
-          password: String(formData.get("password") ?? "")
+          username,
+          password
         })
       });
       const result = await response.json();
 
       if (!response.ok || !result.ok) {
-        const errMsg = result.error ?? "Unable to sign in";
+        const errMsg = response.status === 401 ? "We couldn’t sign you in. Check your email and password or contact ITSM." : result.error ?? "Unable to sign in right now. Please try again.";
         setMessage(errMsg);
         toast.add({ type: "error", description: errMsg, priority: "high" });
         return;
@@ -63,10 +70,12 @@ export function LoginForm() {
           className="input"
           name="password"
           placeholder="Enter your password"
-          type="password"
+          type={showPassword ? "text" : "password"}
           required
           autoComplete="current-password"
         />
+        <button type="button" className="password-toggle" onClick={() => setShowPassword((value) => !value)} aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? "Hide" : "Show"}</button>
+        {fieldError ? <p className="field-error" role="alert">{fieldError}</p> : null}
       </div>
       <button className="button login-submit" type="submit" disabled={busy}>
         {busy ? "Signing in..." : "Sign in"}
@@ -74,6 +83,7 @@ export function LoginForm() {
       <p className="login-form-note">
         Use your authorized Madison88 account. Access is controlled by your active costing profile and assigned role.
       </p>
+      <a className="login-recovery" href="https://m88itsm.netlify.app/login" target="_blank" rel="noreferrer">Forgot password or having an issue? Report it to ITSM →</a>
       {message ? <p className="form-message">{message}</p> : null}
     </form>
   );

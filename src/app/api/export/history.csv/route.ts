@@ -1,10 +1,10 @@
 import { csvResponse, toCsv } from "@/lib/export/csv";
 import { listHistoricalCostings, smvSourceStatus } from "@/lib/costing/history";
-import { canAccessInternalCostData, getCurrentRole } from "@/lib/auth/roles";
+import { canAccessHistoricalCostData, getCurrentRole } from "@/lib/auth/roles";
 
 export async function GET(request: Request) {
   const role = getCurrentRole();
-  if (!canAccessInternalCostData(role) || role === "viewer") {
+  if (!canAccessHistoricalCostData(role)) {
     return new Response("Forbidden", { status: 403 });
   }
   const url = new URL(request.url);
