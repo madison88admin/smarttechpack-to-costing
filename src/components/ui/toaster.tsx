@@ -51,16 +51,16 @@ function ToastCard({ toast, onRemove }: { toast: ToastItem; onRemove: (id: strin
         display: "flex",
         alignItems: "flex-start",
         gap: 10,
-        padding: "12px 14px",
-        borderRadius: 8,
+        padding: "14px 16px",
+        borderRadius: 14,
         background: config.bg,
         border: `1px solid ${config.border}`,
-        borderLeft: `4px solid ${config.color}`,
-        boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+        borderLeft: `5px solid ${config.color}`,
+        boxShadow: "0 14px 34px -4px rgba(20, 35, 31, 0.14), 0 4px 12px rgba(20, 35, 31, 0.06)",
         cursor: "pointer",
         minWidth: 280,
-        maxWidth: 400,
-        animation: "toast-slide-in 0.2s ease-out"
+        maxWidth: 420,
+        animation: "toast-slide-in 0.28s cubic-bezier(0.16, 1, 0.3, 1)"
       }}
     >
       <span
@@ -116,12 +116,12 @@ export function Toaster() {
     <>
       <style>{`
         @keyframes toast-slide-in {
-          from { opacity: 0; transform: translateX(100%); }
-          to { opacity: 1; transform: translateX(0); }
+          from { opacity: 0; transform: translateX(40px) scale(0.96); }
+          to { opacity: 1; transform: translateX(0) scale(1); }
         }
         @keyframes toast-slide-out {
-          from { opacity: 1; transform: translateX(0); }
-          to { opacity: 0; transform: translateX(100%); }
+          from { opacity: 1; transform: translateX(0) scale(1); }
+          to { opacity: 0; transform: translateX(40px) scale(0.96); }
         }
       `}</style>
       <div

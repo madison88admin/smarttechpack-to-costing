@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { findLikeStyles } from "../src/lib/costing/history";
+import { findLikeStyles, summarizeLikeStyleMatches, type LikeStyleMatch } from "../src/lib/costing/history";
 
 // Tyler's ask: a searchable database of comparative historical styles across
 // yarn/knit/machine + notes for MD, Costing, and PBD. These tests cover the
@@ -352,5 +352,128 @@ describe("findLikeStyles", () => {
     for (const reason of ["Yarn +3", "Factory +2", "Brand +2", "Customer +2", "Season +1"]) {
       expect(results[0].matchReasons).toContain(reason);
     }
+  });
+});
+
+// The summary is what the search page renders above the results: the averages
+// plus how many matched styles actually carry each figure (imported history
+// often has no consumption / knitting time), and the per-machine speed table.
+describe("summarizeLikeStyleMatches", () => {
+  const match = (partial: Record<string, unknown>) => partial as unknown as LikeStyleMatch;
+
+  it.each([
+    [
+      "counts every match that carries the figures",
+      [
+        match({ machine_type: "Flat-9GG", knitting_time: 10, average_consumption: 2 }),
+        match({ machine_type: "Flat-9GG", knitting_time: 12, average_consumption: 4 })
+      ],
+      { averageConsumption: 3, consumptionSampleSize: 2, averageKnittingTime: 11, knittingSampleSize: 2, sampleSize: 2 }
+    ],
+    [
+      "excludes figure-less imported rows from the averages but still counts them as matched",
+      [
+        match({ machine_type: "Flat-9GG", knitting_time: 10, average_consumption: 2 }),
+        match({ machine_type: null, knitting_time: null, average_consumption: null }),
+        match({ machine_type: "Circular", knitting_time: null, average_consumption: null })
+      ],
+      { averageConsumption: 2, consumptionSampleSize: 1, averageKnittingTime: 10, knittingSampleSize: 1, sampleSize: 3 }
+    ],
+    [
+      "reports no average rather than zero when nothing carries a figure",
+      [match({ machine_type: "Flat-9GG", knitting_time: null, average_consumption: null })],
+      { averageConsumption: null, consumptionSampleSize: 0, averageKnittingTime: null, knittingSampleSize: 0, sampleSize: 1 }
+    ],
+    [
+      "handles an empty match set",
+      [],
+      { averageConsumption: null, consumptionSampleSize: 0, averageKnittingTime: null, knittingSampleSize: 0, sampleSize: 0 }
+    ]
+  ])("%s", (_label, matches, expected) => {
+    expect(summarizeLikeStyleMatches(matches)).toMatchObject(expected);
+  });
+
+  it("buckets machine speed per machine type, fastest first, skipping unknown machines", () => {
+    const summary = summarizeLikeStyleMatches([
+      match({ machine_type: "Flat-9GG", knitting_time: 10 }),
+      match({ machine_type: "Flat-9GG", knitting_time: 12 }),
+      match({ machine_type: " Circular ", knitting_time: 7 }),
+      match({ machine_type: null, knitting_time: 1 }),
+      match({ machine_type: "Flat-5GG", knitting_time: null })
+    ]);
+
+    expect(summary.machineSpeeds).toEqual([
+      { machineType: "Circular", avgKnittingTime: 7, sampleSize: 1, currency: "USD", avgLandedCost: null, costSampleSize: 0, avgMargin: null, marginSampleSize: 0 },
+      { machineType: "Flat-9GG", avgKnittingTime: 11, sampleSize: 2, currency: "USD", avgLandedCost: null, costSampleSize: 0, avgMargin: null, marginSampleSize: 0 },
+      // No recorded speed: still listed (it carries cost data), ordered last.
+      { machineType: "Flat-5GG", avgKnittingTime: null, sampleSize: 0, currency: "USD", avgLandedCost: null, costSampleSize: 0, avgMargin: null, marginSampleSize: 0 }
+    ]);
+  });
+
+  // PBD picks a machine on speed AND what it costs, so each machine averages
+  // the cost basis and the real margin over the styles that carry them.
+  it.each([
+    [
+      "averages landed cost and margin per machine, each over its own sample",
+      [
+        match({ machine_type: "Flat-9GG", total_cost: 1, landed_cost: 1.2, selling_price: 3 }),
+        match({ machine_type: "Flat-9GG", total_cost: 2, landed_cost: 2, selling_price: null }),
+        match({ machine_type: "Flat-9GG", total_cost: 3 })
+      ],
+      [
+        {
+          machineType: "Flat-9GG",
+          avgKnittingTime: null,
+          sampleSize: 0,
+          currency: "USD",
+          avgLandedCost: (1.2 + 2 + 3) / 3,
+          costSampleSize: 3,
+          // (3 - 1.2) / 1 — the unpriced rows never enter the margin average.
+          avgMargin: 1.8,
+          marginSampleSize: 1
+        }
+      ]
+    ],
+    [
+      "falls back to the FOB total when no landed cost was recorded",
+      [match({ machine_type: "Circular", total_cost: 4 })],
+      [
+        {
+          machineType: "Circular",
+          avgKnittingTime: null,
+          sampleSize: 0,
+          currency: "USD",
+          avgLandedCost: 4,
+          costSampleSize: 1,
+          avgMargin: null,
+          marginSampleSize: 0
+        }
+      ]
+    ],
+    [
+      "never invents a margin from a markup estimate",
+      [match({ machine_type: "Flat-5GG", total_cost: 1, landed_cost: 1, selling_price: null })],
+      [
+        {
+          machineType: "Flat-5GG",
+          avgLandedCost: 1,
+          costSampleSize: 1,
+          avgMargin: null,
+          marginSampleSize: 0
+        }
+      ]
+    ]
+  ])("%s", (_label, matches, expected) => {
+    expect(summarizeLikeStyleMatches(matches).machineSpeeds).toMatchObject(expected);
+  });
+
+  it("states the dominant currency behind a machine's cost average", () => {
+    const summary = summarizeLikeStyleMatches([
+      match({ machine_type: "Flat-9GG", total_cost: 1, currency: "EUR" }),
+      match({ machine_type: "Flat-9GG", total_cost: 2, currency: "EUR" }),
+      match({ machine_type: "Flat-9GG", total_cost: 3, currency: "USD" })
+    ]);
+
+    expect(summary.machineSpeeds[0]).toMatchObject({ currency: "EUR", costSampleSize: 3 });
   });
 });

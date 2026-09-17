@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { LikeStyleMatch } from "@/lib/costing/history";
+import type { LikeStyleMatch, MachineSpeed } from "@/lib/costing/history";
 import { CopyShareLink } from "@/components/copy-share-link";
+import { SkeletonTable } from "@/components/ui/skeleton";
 import {
   DEFAULT_LIKE_STYLES_FILTERS,
   hasLikeStylesCriteria,
@@ -13,6 +14,8 @@ import {
   type LikeStylesFilters
 } from "@/lib/like-styles-prefs";
 
+
+
 type SearchResponse = {
   ok: boolean;
   error?: string;
@@ -21,6 +24,9 @@ type SearchResponse = {
     averageConsumption: number | null;
     averageKnittingTime: number | null;
     sampleSize: number;
+    machineSpeeds?: MachineSpeed[];
+  consumptionSampleSize?: number;
+  knittingSampleSize?: number;
   };
 };
 
@@ -39,9 +45,22 @@ type DistinctOptions = {
   seasons: string[];
 };
 
+type NextGenFilterOptions = DistinctOptions;
+
+function mergeOptions(...groups: string[][]): string[] {
+  const seen = new Map<string, string>();
+  for (const value of groups.flat()) {
+    const cleaned = value.trim();
+    if (cleaned && !seen.has(cleaned.toLocaleLowerCase())) seen.set(cleaned.toLocaleLowerCase(), cleaned);
+  }
+  return [...seen.values()].sort((a, b) => a.localeCompare(b));
+}
+
 export function LikeStylesSearch() {
   const [filters, setFilters] = useState<LikeStylesFilters>(DEFAULT_LIKE_STYLES_FILTERS);
   const [results, setResults] = useState<LikeStyleMatch[] | null>(null);
+  const [resultsPage, setResultsPage] = useState(0);
+  const [previewResultId, setPreviewResultId] = useState<string | null>(null);
   const [benchmark, setBenchmark] = useState<SearchResponse["benchmark"] | null>(null);
   const [searched, setSearched] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -68,6 +87,8 @@ export function LikeStylesSearch() {
   const [savingSet, setSavingSet] = useState(false);
   const [savedShareUrl, setSavedShareUrl] = useState("");
   const [saveError, setSaveError] = useState("");
+  const [nextGenDirectoryState, setNextGenDirectoryState] = useState<"loading" | "live" | "partial" | "unavailable">("loading");
+  const [lastDirectoryRefresh, setLastDirectoryRefresh] = useState<Date | null>(null);
 
   function setField(field: keyof LikeStylesFilters, value: string | number) {
     setFilters((prev) => ({ ...prev, [field]: value }));
@@ -126,6 +147,8 @@ export function LikeStylesSearch() {
         setBenchmark(null);
       } else {
         setResults(body.data ?? []);
+        setResultsPage(0);
+        setPreviewResultId(null);
         setBenchmark(body.benchmark ?? null);
         setSearched(true);
         setLastQuery(query);
@@ -139,14 +162,47 @@ export function LikeStylesSearch() {
     }
   }, []);
 
-  // Load distinct dropdown options from the 2828-row databank (historical_costings)
+  // The approved-cost library remains the source for comparison results. The
+  // available filter directory is also fetched live from NextGen (Products +
+  // PO lines), so current values are selectable before historical sync.
   useEffect(() => {
+    // Do not block the usable historical menus behind a slower NextGen call.
+    // Each source updates the same directory independently.
     fetch("/api/historical/distinct")
       .then((r) => r.json())
-      .then((body) => {
-        if (body.ok && body.data) setDistinct(body.data);
+      .then((historical) => {
+        if (historical?.ok && historical.data) {
+          setDistinct((current) => Object.fromEntries(
+            Object.keys(current).map((key) => [key, mergeOptions(current[key as keyof DistinctOptions], historical.data[key] ?? [])])
+          ) as DistinctOptions);
+          setLastDirectoryRefresh(new Date());
+        }
       })
       .catch(() => {});
+
+    fetch("/api/nextgen/filter-options")
+      .then((r) => r.json())
+      .then((nextGen) => {
+        if (!nextGen?.ok) {
+          setNextGenDirectoryState("unavailable");
+          return;
+        }
+        const data = nextGen as NextGenFilterOptions;
+        setDistinct((current) => ({
+          yarnTypes: mergeOptions(current.yarnTypes, data.yarnTypes),
+          knitTypes: mergeOptions(current.knitTypes, data.knitTypes),
+          machineTypes: mergeOptions(current.machineTypes, data.machineTypes),
+          constructions: mergeOptions(current.constructions, data.constructions),
+          categories: mergeOptions(current.categories, data.categories),
+          factories: mergeOptions(current.factories, data.factories),
+          brands: mergeOptions(current.brands, data.brands),
+          customers: mergeOptions(current.customers, data.customers),
+          seasons: mergeOptions(current.seasons, data.seasons)
+        }));
+        setNextGenDirectoryState(nextGen.partial ? "partial" : "live");
+        setLastDirectoryRefresh(nextGen.refreshedAt ? new Date(nextGen.refreshedAt) : new Date());
+      })
+      .catch(() => setNextGenDirectoryState("unavailable"));
   }, []);
 
   // Restore the saved comparison search on mount (hydration-safe: the initial
@@ -182,6 +238,26 @@ export function LikeStylesSearch() {
     }, 600);
     return () => clearTimeout(timer);
   }, [filters, runSearch]);
+
+  const activeFilters = Object.entries(filters).filter(([key, value]) => String(value).trim() && (key !== "minScore" || Number(value) > 0));
+  // The averages only cover the matched styles that actually carry the figure
+  // (imported history often has no consumption / knitting time), so the card
+  // states its own sample instead of implying the whole match set.
+  const consumptionSample = benchmark?.consumptionSampleSize ?? results?.filter((row) => row.average_consumption != null).length ?? 0;
+  const knittingSample = benchmark?.knittingSampleSize ?? results?.filter((row) => row.knitting_time != null).length ?? 0;
+  // The machine table is sorted fastest first, so the first row that actually
+  // carries a time is the fastest machine — cost-only machines sort last.
+  const fastestMachine = benchmark?.machineSpeeds?.find((row) => row.avgKnittingTime != null) ?? null;
+  function clearFilters() {
+    setFilters(DEFAULT_LIKE_STYLES_FILTERS);
+    lastSearchedRef.current = "";
+    setResults(null);
+    setBenchmark(null);
+    setSearched(false);
+    setLastQuery("");
+    setPreviewResultId(null);
+    try { localStorage.removeItem(STORAGE_KEY); } catch { /* storage unavailable */ }
+  }
 
   return (
     <section className="panel">
@@ -249,7 +325,21 @@ export function LikeStylesSearch() {
         <button className="button secondary" type="submit" disabled={loading} style={{ alignSelf: "end" }}>
           {loading ? "Searching…" : "Find Like Styles"}
         </button>
+        <button className="button ghost-button" type="button" onClick={clearFilters} disabled={loading || activeFilters.length === 0} style={{ alignSelf: "end" }}>
+          Clear filters
+        </button>
       </form>
+      {activeFilters.length ? (
+        <div className="active-filter-summary" aria-label="Active filters">
+          <strong>Active filters</strong>
+          {activeFilters.map(([key, value]) => <button key={key} type="button" className="filter-chip" onClick={() => setField(key as keyof LikeStylesFilters, key === "minScore" ? Number(value) : "")}>{key === "minScore" ? `Min score: ${value}` : `${key.replace(/([A-Z])/g, " $1")}: ${value}`} <span aria-hidden="true">×</span></button>)}
+          <span className="result-count">{results ? `${results.length} result${results.length === 1 ? "" : "s"}` : "No results loaded"}</span>
+        </div>
+      ) : null}
+      <p className={`like-styles-source ${nextGenDirectoryState}`}>
+        Historical comparisons use approved Supabase costings. Filter choices also use {nextGenDirectoryState === "live" ? "live NextGen Product and PO-line data" : nextGenDirectoryState === "partial" ? "partial NextGen data (not a complete directory)" : nextGenDirectoryState === "loading" ? "NextGen data (loading…)" : "historical options while NextGen is unavailable"}. {lastDirectoryRefresh ? `Last refreshed ${lastDirectoryRefresh.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.` : ""}
+      </p>
+      {nextGenDirectoryState === "loading" && !distinct.yarnTypes.length ? <SkeletonTable rows={2} /> : null}
 
       {error ? <p className="notice">{error}</p> : null}
 
@@ -264,14 +354,98 @@ export function LikeStylesSearch() {
             <strong>
               {benchmark.averageConsumption != null ? benchmark.averageConsumption.toFixed(2) : "—"}
             </strong>
+            {benchmark.averageConsumption != null ? (
+              <small>{consumptionSample} of {benchmark.sampleSize} styles carry consumption</small>
+            ) : null}
           </div>
           <div className="metric">
             <span className="metric-label">Avg knitting time (matched)</span>
             <strong>
-              {benchmark.averageKnittingTime != null ? benchmark.averageKnittingTime.toFixed(2) : "—"}
+              {benchmark.averageKnittingTime != null ? `${benchmark.averageKnittingTime.toFixed(1)} min` : "—"}
             </strong>
+            {benchmark.averageKnittingTime != null ? (
+              <small>{knittingSample} of {benchmark.sampleSize} styles carry knitting time</small>
+            ) : null}
           </div>
+          {fastestMachine ? (
+            <div className="metric">
+              <span className="metric-label">Fastest machine (matched)</span>
+              <strong>
+                {fastestMachine.machineType}
+              </strong>
+              <small>
+                {fastestMachine.avgKnittingTime?.toFixed(1)} min avg · {fastestMachine.sampleSize}{" "}
+                style{fastestMachine.sampleSize === 1 ? "" : "s"}
+                {fastestMachine.avgLandedCost != null
+                  ? ` · ${fastestMachine.currency} ${fastestMachine.avgLandedCost.toFixed(2)} cost`
+                  : ""}
+              </small>
+            </div>
+          ) : null}
         </div>
+      ) : null}
+
+      {benchmark?.machineSpeeds?.length ? (
+        <section className="panel" style={{ margin: "0 0 12px" }}>
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Speed and cost from the same historical pool</p>
+              <h2>Machine speed — avg knitting time</h2>
+            </div>
+          </div>
+          <table className="table compact">
+            <thead>
+              <tr>
+                <th>Machine type</th>
+                <th>Avg knitting time</th>
+                <th>Avg landed cost</th>
+                <th>Avg margin</th>
+                <th>Styles</th>
+              </tr>
+            </thead>
+            <tbody>
+              {benchmark.machineSpeeds.map((row) => (
+                <tr key={row.machineType}>
+                  <td><strong>{row.machineType}</strong></td>
+                  <td>{row.avgKnittingTime != null ? `${row.avgKnittingTime.toFixed(1)} min` : "—"}</td>
+                  <td>
+                    {row.avgLandedCost != null ? (
+                      <>
+                        {row.currency} {row.avgLandedCost.toFixed(2)}
+                        <small style={{ display: "block", opacity: 0.7 }}>
+                          {row.costSampleSize} style{row.costSampleSize === 1 ? "" : "s"} with cost
+                        </small>
+                      </>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
+                  <td>
+                    {row.avgMargin != null ? (
+                      <>
+                        {row.avgMargin >= 0 ? "+" : "−"}
+                        {row.currency} {Math.abs(row.avgMargin).toFixed(2)}
+                        <small style={{ display: "block", opacity: 0.7 }}>
+                          {row.marginSampleSize} priced
+                        </small>
+                      </>
+                    ) : (
+                      <span title="No matched style carries a real selling price yet, so no margin can be averaged.">—</span>
+                    )}
+                  </td>
+                  <td>{row.sampleSize}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="chart-caption">
+            Cost and margin are averaged over the matched styles that carry them — never over the whole
+            machine group. Cost is the landed cost where the costing recorded one, otherwise the approved
+            FOB total. Margin needs a real selling price (PBD-entered or NextGen), so imported history
+            without pricing shows “—”. Machines are ordered fastest first; those with no recorded speed are
+            listed last.
+          </p>
+        </section>
       ) : null}
 
       {results && results.length && lastQuery ? (
@@ -328,9 +502,20 @@ export function LikeStylesSearch() {
       ) : null}
 
       {results && results.length ? (
-        <ul className="list compact-list">
-          {results.map((row) => (
-            <li key={row.id}>
+        <>
+        <p className="like-results-summary" aria-live="polite">
+          Showing {resultsPage * 5 + 1}–{Math.min((resultsPage + 1) * 5, results.length)} of {results.length} comparable styles
+        </p>
+        <ul className="list compact-list like-styles-results">
+          {results.slice(resultsPage * 5, resultsPage * 5 + 5).map((row) => (
+            <li
+              key={row.id}
+              className="like-style-result"
+              onMouseEnter={() => setPreviewResultId(row.id)}
+              onMouseLeave={() => setPreviewResultId((current) => current === row.id ? null : current)}
+              onFocus={() => setPreviewResultId(row.id)}
+              onBlur={() => setPreviewResultId((current) => current === row.id ? null : current)}
+            >
               <strong>{row.style_number ?? "No style"}</strong>
               <span className="activity-role">{row.matchScore} match ({row.scorePercent}%)</span>
               {row.confidence ? (
@@ -384,9 +569,31 @@ export function LikeStylesSearch() {
                   </Link>
                 ) : null}
               </>
+              {previewResultId === row.id ? (
+                <div className="like-style-quick-view" role="status">
+                  <strong>Quick view</strong>
+                  <span>Factory: {row.factory_name ?? "Unassigned"}</span>
+                  <span>Brand: {row.brand ?? "Unknown"} · Customer: {row.customer ?? "Unknown"} · Season: {row.season ?? "Unknown"}</span>
+                  <span>Approved cost: {row.currency ?? "USD"} {row.total_cost?.toFixed(2) ?? "—"}</span>
+                  <span>Yarn: {row.yarn_type ?? "—"} · Knit: {row.knit_type ?? "—"} · Machine: {row.machine_type ?? "—"}</span>
+                  <span>Construction: {row.construction ?? "—"} · Category: {row.product_category ?? "—"}</span>
+                  <span>Consumption: {row.average_consumption != null ? `${row.average_consumption.toFixed(2)} kg` : "—"} · Knitting: {row.knitting_time != null ? `${row.knitting_time.toFixed(2)} min` : "—"}</span>
+                </div>
+              ) : null}
+              <button type="button" className="quick-view-trigger" onClick={() => setPreviewResultId((current) => current === row.id ? null : row.id)} aria-expanded={previewResultId === row.id}>
+                {previewResultId === row.id ? "Hide quick view" : "Quick view"}
+              </button>
             </li>
           ))}
         </ul>
+        {results.length > 5 ? (
+          <div className="pagination-controls like-styles-pagination">
+            <button className="button secondary small-btn" type="button" onClick={() => setResultsPage((page) => Math.max(0, page - 1))} disabled={resultsPage === 0}>Previous 5</button>
+            <span className="eyebrow">Page {resultsPage + 1} of {Math.ceil(results.length / 5)}</span>
+            <button className="button secondary small-btn" type="button" onClick={() => setResultsPage((page) => Math.min(Math.ceil(results.length / 5) - 1, page + 1))} disabled={(resultsPage + 1) * 5 >= results.length}>Next 5</button>
+          </div>
+        ) : null}
+        </>
       ) : null}
     </section>
   );

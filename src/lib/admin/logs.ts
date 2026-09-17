@@ -83,7 +83,7 @@ export async function listAuditEvents(opts?: {
 
   let request = supabase
     .from("workflow_events")
-    .select("id,costing_request_id,event_type,actor_role,payload,notification_status,created_at,processed_at", { count: "exact" })
+    .select("id,costing_request_id,event_type,actor_role,actor_user_id,payload,notification_status,created_at,processed_at", { count: "exact" })
     .order("created_at", { ascending: false })
     .range(offset, offset + limit - 1);
 
