@@ -118,4 +118,10 @@ cd "$ROOT"
 # on a failed upstream login, which would 500 the proxy routes regardless of
 # the param. The DB-backed surface (the regression class this replay guards) is
 # fully probed; upstream proxies are fuzzed where NextGen is reachable instead.
-node scripts/fuzz-http.mjs --roles pbd,admin --secret "${SESSION_SECRET}" --base "${APP_URL}" --concurrency 4 --skip-upstream
+node scripts/fuzz-http.mjs --roles pbd,admin --secret "${SESSION_SECRET}" --base "${APP_URL}" --concurrency 4 --skip-upstream || {
+  # The harness only reports status codes; the server log has the stack that
+  # says why a route 500s on a freshly-built database.
+  echo "[boot] harness failed — app log tail:"
+  tail -60 /tmp/tp-fuzz-app.log
+  exit 1
+}
