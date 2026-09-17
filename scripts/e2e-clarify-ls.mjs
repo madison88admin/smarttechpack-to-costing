@@ -9,11 +9,27 @@
 // Reads TP_COSTING_SESSION_SECRET via mint-cookie.mjs and
 // SUPABASE_SERVICE_ROLE_KEY from .env.local. Importing this file does nothing;
 // the driver runs only when executed directly (guarded like mint-cookie.mjs).
+//
+// The database it writes to is resolved, never inherited from the app's own
+// configuration (which points at production here): TP_E2E_REST names it, the
+// default is the local PostgREST, and a non-loopback target needs
+// TP_E2E_ALLOW_LIVE_DB=1.
 
 import { readFileSync, existsSync } from "node:fs";
 import { mintCookie } from "./mint-cookie.mjs";
 import { chromium } from "@playwright/test";
-import { beginDriverRun } from "./lib/driver-guard.mjs";
+import { beginDriverRun, exitCleanly } from "./lib/driver-guard.mjs";
+import { resolveRestTarget } from "./lib/rest-target.mjs";
+
+// Refuse an unsafe database before anything else happens — before the service
+// key is read, and long before a row is written.
+let target;
+try {
+  target = resolveRestTarget({ usage: "node scripts/e2e-clarify-ls.mjs [baseUrl]" });
+} catch (error) {
+  console.error(`\n${error.message}\n`);
+  await exitCleanly(3);
+}
 
 const BASE = process.argv[2] ?? "http://localhost:3120";
 
@@ -65,7 +81,7 @@ async function api(path, { method = "GET", role, body, expect } = {}) {
   return { status: res.status, json };
 }
 
-const PGREST = "http://5.223.78.194:8000/rest/v1";
+const PGREST = target.rest;
 async function db(path) {
   const res = await fetch(`${PGREST}${path}`, {
     headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}`, "Accept-Profile": "tp_costing" }
@@ -181,6 +197,7 @@ async function main() {
   // Refuses to run over a previous run's leftovers; owns cleanup for every
   // exit path, so an interrupted run cannot leave test requests behind.
   run = await beginDriverRun({ name: "e2e-clarify-ls", marker: MARKER, rest: PGREST, headers: DB_HEADERS });
+  console.log(`direct database: ${PGREST}${target.live ? "  (NON-LOCAL — TP_E2E_ALLOW_LIVE_DB=1 acknowledged)" : "  (local)"}`);
   const created = [];
   run.track(async () => {
     for (const entry of created) await cleanup(entry.id, entry.styleNumber);

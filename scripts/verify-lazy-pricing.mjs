@@ -8,10 +8,26 @@
 // process early and leaks the test requests it created.
 //
 // Usage: node scripts/verify-lazy-pricing.mjs [baseUrl] [entityId] [styleNumber]
+//
+// The database it writes to is resolved, never inherited from the app's own
+// configuration (which points at production here): TP_E2E_REST names it, the
+// default is the local PostgREST, and a non-loopback target needs
+// TP_E2E_ALLOW_LIVE_DB=1.
 
 import { readFileSync, existsSync } from "node:fs";
 import { mintCookie } from "./mint-cookie.mjs";
-import { beginDriverRun } from "./lib/driver-guard.mjs";
+import { beginDriverRun, exitCleanly } from "./lib/driver-guard.mjs";
+import { resolveRestTarget } from "./lib/rest-target.mjs";
+
+// Refuse an unsafe database before anything else happens — before the service
+// key is read, and long before a row is written.
+let target;
+try {
+  target = resolveRestTarget({ usage: "node scripts/verify-lazy-pricing.mjs [baseUrl] [entityId] [styleNumber]" });
+} catch (error) {
+  console.error(`\n${error.message}\n`);
+  await exitCleanly(3);
+}
 
 const BASE = process.argv[2] ?? "http://localhost:3120";
 const REAL_ENTITY = process.argv[3] ?? "12992";
@@ -37,7 +53,7 @@ function loadEnvKey(name) {
   throw new Error(`${name} not found`);
 }
 const SERVICE_KEY = loadEnvKey("SUPABASE_SERVICE_ROLE_KEY");
-const PGREST = "http://5.223.78.194:8000/rest/v1";
+const PGREST = target.rest;
 
 async function db(path) {
   return (await fetch(`${PGREST}${path}`, { headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}`, "Accept-Profile": "tp_costing" } })).json();
@@ -161,6 +177,7 @@ async function main() {
   // Refuses to run over a previous run's leftovers; owns cleanup for every
   // exit path (finish, crash, Ctrl+C, closed stdout).
   run = await beginDriverRun({ name: "verify-lazy-pricing", marker: MARKER, rest: PGREST, headers: DB_HEADERS });
+  console.log(`direct database: ${PGREST}${target.live ? "  (NON-LOCAL — TP_E2E_ALLOW_LIVE_DB=1 acknowledged)" : "  (local)"}`);
   run.track(async () => {
     for (const entry of createdRequests) await cleanup(entry.id);
   });
