@@ -50,12 +50,15 @@ jobs:
   # scripts/ci-fuzz-boot.sh stands up the stack: Postgres service below,
   # PostgREST binary (runner-side), a /rest/v1 prefix proxy, the app dev
   # server, then runs the harness as unauthenticated + pbd + admin.
+  # The image must be pgvector-enabled: the schema declares
+  # `historical_costings.embedding vector(1536)` and production runs Supabase
+  # (pgvector available), so plain postgres fails the schema load.
   fuzz-live:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     services:
       postgres:
-        image: postgres:16
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
