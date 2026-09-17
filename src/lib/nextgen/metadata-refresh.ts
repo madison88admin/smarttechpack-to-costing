@@ -3,7 +3,7 @@ import { legacyKendoSearchPayload, nextGenPost } from "./client";
 import { normalizeProductSearch } from "./normalize";
 import { nextGenMetaFromRaw, nextGenMetaOf, type NextGenMeta } from "./product-meta";
 import { recordWorkflowEvent } from "@/lib/workflow/events";
-import { enqueueCostingChangeAlert } from "@/lib/notifications/workflow-alerts";
+import { enqueueChangeAlert } from "@/lib/notifications/workflow-alerts";
 
 /**
  * NextGen product metadata refresh.
@@ -158,7 +158,8 @@ export async function refreshActiveProductMetadata(limit = 300): Promise<Metadat
           result.changed++;
           const affectedRequests = requestsByProduct.get(style.id) ?? [];
           for (const req of affectedRequests) {
-            await enqueueCostingChangeAlert({
+            await enqueueChangeAlert({
+              recipientRole: "costing",
               requestId: req.id,
               requestNumber: req.request_number,
               factoryName: req.factory_name,

@@ -1,19 +1,18 @@
 import { NextResponse } from "next/server";
 import { tryListHistoricalCostings } from "@/lib/costing/history";
-import { getCurrentRole, type UserRole } from "@/lib/auth/roles";
+import { canAccessHistoricalCostData, getCurrentRole } from "@/lib/auth/roles";
 
 export const dynamic = "force-dynamic";
 
-// Free-text search over the approved-cost library, used by the baseline
-// picker inside the Create Request form (and anything that needs to find a
-// historical costing by style / factory / yarn / notes keyword). Factory is
-// excluded, matching the Like Styles search.
-const ALLOWED_ROLES: UserRole[] = ["admin", "manager", "pbd", "costing", "md"];
+// Free-text search over the approved-cost library, used by the baseline picker
+// inside the Create Request form (and anything that needs to find a historical
+// costing by style / factory / yarn / notes keyword). Internal roles only,
+// matching the Like Styles search.
 
 // GET /api/historical/search?q=...&factory=...&limit=...
 export async function GET(request: Request) {
   const role = getCurrentRole();
-  if (!ALLOWED_ROLES.includes(role)) {
+  if (!canAccessHistoricalCostData(role)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 

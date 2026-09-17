@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { tryGetNextGenFilterOptions } from "@/lib/nextgen/filter-options";
+import { getNextGenFilterOptions } from "@/lib/nextgen/filter-options";
 import { getCurrentRole } from "@/lib/auth/roles";
 
 export async function GET() {
@@ -7,6 +7,10 @@ export async function GET() {
   if (role === "viewer") {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
-  const data = await tryGetNextGenFilterOptions();
-  return NextResponse.json({ ok: true, ...data });
+  try {
+    const data = await getNextGenFilterOptions();
+    return NextResponse.json({ ok: true, ...data });
+  } catch {
+    return NextResponse.json({ ok: false, error: "NextGen directory is unavailable. Historical filters remain available." }, { status: 503 });
+  }
 }

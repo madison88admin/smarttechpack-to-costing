@@ -32,7 +32,7 @@ vi.mock("@/lib/notifications/workflow-alerts", async (importOriginal) => {
   const original = await importOriginal<typeof import("../src/lib/notifications/workflow-alerts")>();
   return {
     ...original,
-    enqueueCostingChangeAlert: (...args: unknown[]) =>
+    enqueueChangeAlert: (...args: unknown[]) =>
       (mocks.enqueue as (...a: unknown[]) => Promise<unknown>)(...args)
   };
 });

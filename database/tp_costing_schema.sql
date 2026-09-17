@@ -250,7 +250,11 @@ alter table if exists tp_costing.historical_costings
   add column if not exists knitting_time numeric,
   add column if not exists brand text,
   add column if not exists customer text,
-  add column if not exists season text;
+  add column if not exists season text,
+  -- Migration 018: landed cost + real selling price, so the Like Styles machine
+  -- table can average what a machine costs and earns per matched style.
+  add column if not exists landed_cost numeric,
+  add column if not exists selling_price numeric;
 
 create unique index if not exists historical_costings_request_unique
   on tp_costing.historical_costings(costing_request_id)
@@ -484,6 +488,33 @@ create table if not exists tp_costing.notification_reads (
 alter table tp_costing.notification_reads enable row level security;
 revoke all on table tp_costing.notification_reads from anon, authenticated;
 grant all on table tp_costing.notification_reads to service_role;
+
+-- Structured per-field change requests (migration 016)
+create table if not exists tp_costing.cbd_change_requests (
+  id uuid primary key default gen_random_uuid(),
+  costing_request_id uuid not null references tp_costing.costing_requests(id) on delete cascade,
+  cbd_section text not null default '',
+  field_key text not null default '',
+  field_label text not null default '',
+  current_value text not null default '',
+  requested_value text not null default '',
+  reason text not null default '',
+  priority text not null default 'normal',
+  due_date date,
+  status text not null default 'open',
+  requested_by_role text,
+  requested_by_name text,
+  resolved_cbd_id uuid references tp_costing.factory_cbds(id) on delete set null,
+  created_at timestamptz not null default now(),
+  resolved_at timestamptz
+);
+
+create index if not exists cbd_change_requests_request_idx
+  on tp_costing.cbd_change_requests(costing_request_id, status, created_at desc);
+
+alter table tp_costing.cbd_change_requests enable row level security;
+revoke all on table tp_costing.cbd_change_requests from anon, authenticated;
+grant all on table tp_costing.cbd_change_requests to service_role;
 
 -- NextGen-synced historical records are flagged with source = 'nextgen' so
 -- re-syncs can dedup and benchmarks can exclude dropped/archived products.
