@@ -2,17 +2,27 @@ import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { getWorkflowSettings } from "@/lib/admin/settings";
 import { recordInAppAlert } from "./in-app";
 
-// Change alerts to the Costing Team. These are enqueued directly into the
-// notification_queue (the same channel the escalation/queue processors send),
-// so they work without notification_recipients configuration rows.
+// Change alerts addressed to the role that owns the NEXT step of a request.
+// These are enqueued directly into the notification_queue (the same channel the
+// escalation/queue processors send), so they work without
+// notification_recipients configuration rows.
 //
-// Business requirement: the costing team must be notified whenever
-//   (a) the BOM / CBD material lines change on a request (factory resubmit), and
-//   (b) PBD changes anything in the costing (pricing) review.
+// Business requirement: whoever has to act on revised numbers is told what
+// moved and why it is their turn —
+//   (a) the BOM / CBD material lines changed on a factory resubmit (the review
+//       lane the correction re-enters: Costing, or MD for a technical review), and
+//   (b) PBD changes anything in the costing (pricing) review -> Costing.
+// A correction that returns straight to PBD does not re-open Costing's gate, so
+// that lane sends no change alert — see the call site in lib/costing/cbd.ts.
 
 export type ChangeAlertKind = "bom_changed" | "pbd_pricing_updated";
 
+/** Roles that re-examine the numbers after a change — the alert's audience. */
+export type ChangeAlertOwnerRole = "costing" | "md";
+
 type ChangeAlertInput = {
+  /** Role that owns the next step: receives the email, Teams post, and in-app alert. */
+  recipientRole: ChangeAlertOwnerRole;
   requestId: string;
   requestNumber: string | null;
   factoryName: string | null;
@@ -23,30 +33,12 @@ type ChangeAlertInput = {
   changes?: string[];
 };
 
-async function resolveCostingRecipients(): Promise<string[]> {
-  const supabase = createSupabaseServiceClient();
-  const { data } = await supabase
-    .from("user_profiles")
-    .select("email")
-    .eq("role", "costing")
-    .eq("is_active", true);
-
-  const emails = ((data ?? []) as Array<{ email: string | null }>)
-    .map((row) => row.email)
-    .filter((email): email is string => Boolean(email));
-
-  if (emails.length) return emails;
-
-  const fallback = process.env.COSTING_NOTIFICATION_EMAIL ?? process.env.NOTIFICATION_FALLBACK_EMAIL;
-  return fallback ? [fallback] : [];
-}
-
 /**
- * Enqueues a costing-team change alert. Never throws — callers invoke this on
- * a best-effort basis after the workflow write succeeds. Returns the number of
- * notifications enqueued.
+ * Enqueues a change alert to the role that owns the next step. Never throws —
+ * callers invoke this on a best-effort basis after the workflow write succeeds.
+ * Returns the number of notifications enqueued.
  */
-export async function enqueueCostingChangeAlert(input: ChangeAlertInput): Promise<number> {
+export async function enqueueChangeAlert(input: ChangeAlertInput): Promise<number> {
   try {
     const supabase = createSupabaseServiceClient();
     const settings = await getWorkflowSettings().catch(() => null);
@@ -55,8 +47,9 @@ export async function enqueueCostingChangeAlert(input: ChangeAlertInput): Promis
     const link = `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/requests/${input.requestId}`;
 
     // Change alerts are core requested behavior — enqueue email to the real
-    // costing recipients regardless of the master notification toggle.
-    const recipients = await resolveCostingRecipients();
+    // recipients of the role that owns the next step, regardless of the master
+    // notification toggle.
+    const recipients = await resolveRoleRecipients(input.recipientRole);
     for (const email of recipients) {
       await supabase.from("notification_queue").insert({
         costing_request_id: input.requestId,
@@ -82,13 +75,13 @@ export async function enqueueCostingChangeAlert(input: ChangeAlertInput): Promis
       enqueued++;
     }
 
-    // Surface as an in-app alert on the dashboard for the costing team.
-    // Per-field old → new lines ride along in the payload so the panel can
-    // render exactly what changed without recomputing the diff.
+    // Surface as an in-app alert on the dashboard of the role that owns the
+    // next step. Per-field old → new lines ride along in the payload so the
+    // panel can render exactly what changed without recomputing the diff.
     await recordInAppAlert({
       requestId: input.requestId,
       alertType: input.kind,
-      recipientRole: "costing",
+      recipientRole: input.recipientRole,
       title: input.subject,
       body: input.body,
       payload: input.changes?.length ? { kind: input.kind, changes: input.changes } : { kind: input.kind }
@@ -96,7 +89,7 @@ export async function enqueueCostingChangeAlert(input: ChangeAlertInput): Promis
 
     return enqueued;
   } catch (error) {
-    console.error("[notifications] costing change alert not sent:", error instanceof Error ? error.message : error);
+    console.error("[notifications] change alert not sent:", error instanceof Error ? error.message : error);
     return 0;
   }
 }
@@ -108,6 +101,21 @@ export type FieldChangeLine = {
   newValue: string;
 };
 
+// What each owner of a changed CBD is being asked to do. The alert used to say
+// "re-validate before approval" to everyone, which told MD to do Costing's job.
+const CHANGE_ALERT_OWNER_COPY: Record<ChangeAlertOwnerRole, { label: string; subject: string; nextStep: string }> = {
+  costing: {
+    label: "Costing",
+    subject: "Costing re-validation required",
+    nextStep: "re-validate the revised costs before approval"
+  },
+  md: {
+    label: "MD",
+    subject: "MD review required",
+    nextStep: "review the revised material, construction, and consumption figures"
+  }
+};
+
 /** Alert sent when a factory CBD resubmission changes BOM/material lines. */
 export function bomChangedAlertBody(input: {
   requestNumber: string | null;
@@ -116,6 +124,8 @@ export function bomChangedAlertBody(input: {
   fobBefore: number;
   fobAfter: number;
   currency: string;
+  /** Role that owns the next step — the alert is written for them. */
+  ownerRole: ChangeAlertOwnerRole;
   /** Per-field old → new lines (newest submissions carry these; older callers omit). */
   changes?: FieldChangeLine[];
 }): { subject: string; body: string } {
@@ -124,8 +134,9 @@ export function bomChangedAlertBody(input: {
   const direction = delta > 0 ? "+" : "";
   const shown = (input.changes ?? []).slice(0, 8);
   const hidden = (input.changes ?? []).length - shown.length;
+  const owner = CHANGE_ALERT_OWNER_COPY[input.ownerRole];
   return {
-    subject: `[${input.requestNumber ?? "Request"}] BOM / CBD changed by factory — ${input.changedCount} field(s)`,
+    subject: `[${input.requestNumber ?? "Request"}] BOM / CBD changed by factory — ${input.changedCount} field(s) · ${owner.subject}`,
     body: [
       `Request: ${input.requestNumber ?? "Unknown"}`,
       `Factory: ${input.factoryName ?? "Unassigned"}`,
@@ -134,7 +145,8 @@ export function bomChangedAlertBody(input: {
       ...shown.map((change) => `• ${change.field}: ${change.oldValue} → ${change.newValue}`),
       ...(hidden > 0 ? [`• …and ${hidden} more field(s) — open the request to see all`] : []),
       ``,
-      `The factory resubmitted the CBD with material/cost changes. Please re-validate before approval.`
+      `The factory resubmitted the CBD with material/cost changes.`,
+      `Next step (${owner.label}): ${owner.nextStep}.`
     ].join("\n")
   };
 }
@@ -232,7 +244,8 @@ export function outlierAcknowledgedAlertBody(input: {
 // Each workflow stage notifies the role that owns the NEXT step, so the
 // relevant people always know it is their turn:
 //   factory submit      -> MD (technical review)
-//   BOM / CBD change    -> Costing (re-validate)
+//   BOM / CBD change    -> the lane the correction re-enters: Costing, or MD
+//                          when the request is still in technical review
 //   costing_complete    -> PBD (internal approval)
 //   PBD pricing change  -> Costing (review updated figures)
 //   outlier acknowledged-> PBD (approval gate released, ready to approve)

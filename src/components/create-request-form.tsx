@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, type FormEvent } from "react";
+import { useState, useEffect, useRef, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { toast } from "@/components/ui/toast";
@@ -47,6 +47,11 @@ export function CreateRequestForm({
   baseline?: HistoricalCostingRow | null;
 }) {
   const router = useRouter();
+  const formRef = useRef<HTMLFormElement>(null);
+  // The `state === "saving"` disabled attribute only lands after React commits,
+  // so two clicks in the same tick both fire the handler and create two drafts.
+  // This ref is the guard that does not wait for a render.
+  const submittingRef = useRef(false);
   const [state, setState] = useState<SubmitState>("idle");
   const [searchState, setSearchState] = useState<SearchState>(initialStyle ? "idle" : "idle");
   const [bomState, setBomState] = useState<BomState>("idle");
@@ -70,6 +75,8 @@ export function CreateRequestForm({
   const [showBaselinePicker, setShowBaselinePicker] = useState(false);
   const [baselineQuery, setBaselineQuery] = useState("");
   const [baselineResults, setBaselineResults] = useState<HistoricalCostingRow[]>([]);
+  const [baselinePage, setBaselinePage] = useState(0);
+  const [baselinePreviewId, setBaselinePreviewId] = useState<string | null>(null);
   const [baselineSearching, setBaselineSearching] = useState(false);
   const [baselineError, setBaselineError] = useState("");
 
@@ -121,6 +128,8 @@ export function CreateRequestForm({
         setBaselineResults([]);
       } else {
         setBaselineResults(body.data ?? []);
+        setBaselinePage(0);
+        setBaselinePreviewId(null);
       }
     } catch {
       setBaselineError("Search failed — check the connection and retry.");
@@ -130,8 +139,38 @@ export function CreateRequestForm({
     }
   }
 
+  function clearSourceDetails() {
+    formRef.current?.reset();
+    setState("idle");
+    setMessage("");
+    setSearchState("idle");
+    setSearchMessage("");
+    setResults([]);
+    setSelected(null);
+    setBomLines([]);
+    setBomVersion({});
+    setBomState("idle");
+    setBomMessage("");
+    setPoResults([]);
+    setPoSearchState("idle");
+    setPoSearchMessage("");
+    setMpoResults([]);
+    setMpoSearchState("idle");
+    setMpoSearchMessage("");
+    setForceCreateData(null);
+    setActiveBaseline(null);
+    setShowBaselinePicker(false);
+    setBaselineQuery("");
+    setBaselineResults([]);
+    setBaselinePage(0);
+    setBaselinePreviewId(null);
+    setBaselineError("");
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setState("saving");
     setMessage("");
 
@@ -164,6 +203,7 @@ export function CreateRequestForm({
 
     // Handle duplicate detection (409 Conflict)
     if (response.status === 409 && result.duplicates) {
+      submittingRef.current = false; // let the user retry or choose "Create Anyway"
       setState("error");
       const dupList = result.duplicates.map((d: any) =>
         `${d.request_number} (${d.status}${d.factory_name ? `, ${d.factory_name}` : ""})`
@@ -175,6 +215,7 @@ export function CreateRequestForm({
     }
 
     if (!response.ok || !result.ok) {
+      submittingRef.current = false;
       setState("error");
       const errMsg = result.error ?? "Unable to create request";
       setMessage(errMsg);
@@ -290,11 +331,69 @@ export function CreateRequestForm({
     setPoSearchMessage(normalized.length ? `${normalized.length} PO(s) found` : "No POs found");
   }
 
-  function choosePo(po: PoResult) {
+  async function choosePo(po: PoResult) {
     const poInput = document.getElementById("poNumber") as HTMLInputElement | null;
     if (poInput) poInput.value = po.name;
     setPoResults([]);
-    setPoSearchMessage(`Selected: ${po.name}`);
+    setPoSearchState("searching");
+    setPoSearchMessage(`Selected: ${po.name}. Loading linked PO line and product data from NextGen…`);
+
+    try {
+      const response = await fetch(`/api/nextgen/po/lines?poId=${encodeURIComponent(po.id)}&poNumber=${encodeURIComponent(po.name)}`);
+      const body = await response.json();
+      if (!response.ok || !body.ok) {
+        setPoSearchState("error");
+        setPoSearchMessage(body.error ?? `PO selected: ${po.name}. Product details could not be loaded from NextGen.`);
+        return;
+      }
+
+      const line = Array.isArray(body.lines) ? body.lines[0] : null;
+      if (!line) {
+        setPoSearchState("done");
+        setPoSearchMessage(`Selected: ${po.name}. No matching PO line was returned by NextGen.`);
+        return;
+      }
+
+      const fillIfBlank = (id: string, value?: string | null) => {
+        const input = document.getElementById(id) as HTMLInputElement | null;
+        if (input && !input.value.trim() && value?.trim()) input.value = value;
+      };
+      fillIfBlank("factoryName", line.supplier);
+      fillIfBlank("customer", line.customer);
+      fillIfBlank("season", line.season);
+
+      const style = String(line.style ?? body.styles?.[0] ?? "").trim();
+      if (!style) {
+        setPoSearchState("done");
+        setPoSearchMessage(`Selected: ${po.name}. PO line loaded, but it has no linked style/product reference.`);
+        return;
+      }
+
+      const styleInput = document.getElementById("styleNumber") as HTMLInputElement | null;
+      if (styleInput && !styleInput.value.trim()) styleInput.value = style;
+      const productResponse = await fetch(`/api/product/search?q=${encodeURIComponent(style)}`);
+      const productBody = await productResponse.json();
+      const products = Array.isArray(productBody.data) ? productBody.data as ProductResult[] : [];
+      const productIds = Array.isArray(body.productIds) ? body.productIds.map(String) : [];
+      const linkedProduct = products.find((product) => productIds.includes(product.entityId))
+        ?? products.find((product) => product.styleNumber?.trim().toLocaleLowerCase() === style.toLocaleLowerCase())
+        ?? products[0];
+      if (!productResponse.ok || !productBody.ok || !linkedProduct) {
+        setPoSearchState("done");
+        setPoSearchMessage(`Selected: ${po.name}. PO line found (${style}), but a linked Product/BOM record was not returned.`);
+        return;
+      }
+
+      setResults(products);
+      setSearchState("done");
+      setSearchMessage(`Loaded from PO line: ${style}`);
+      chooseProduct(linkedProduct);
+      setPoSearchState("done");
+      setPoSearchMessage(`Selected: ${po.name}. Loaded style ${linkedProduct.styleNumber ?? style} and its NextGen BOM.`);
+    } catch {
+      setPoSearchState("error");
+      setPoSearchMessage(`PO selected: ${po.name}. The PO-line/product lookup failed; retry when NextGen is available.`);
+    }
   }
 
   async function searchMpo() {
@@ -428,7 +527,7 @@ export function CreateRequestForm({
   }
 
   return (
-    <form onSubmit={submit} className="panel">
+    <form ref={formRef} onSubmit={submit} className="panel">
       {activeBaseline ? (
         <div className="baseline-banner">
           <div>
@@ -494,9 +593,20 @@ export function CreateRequestForm({
           </div>
           {baselineError ? <p className="action-error">{baselineError}</p> : null}
           {baselineResults.length ? (
+            <>
+            <p className="baseline-results-summary" aria-live="polite">
+              Showing {baselinePage * 5 + 1}–{Math.min((baselinePage + 1) * 5, baselineResults.length)} of {baselineResults.length} matching approved costings
+            </p>
             <ul className="list compact-list">
-              {baselineResults.map((row) => (
-                <li key={row.id}>
+              {baselineResults.slice(baselinePage * 5, baselinePage * 5 + 5).map((row) => (
+                <li
+                  key={row.id}
+                  className="baseline-result"
+                  onMouseEnter={() => setBaselinePreviewId(row.id)}
+                  onMouseLeave={() => setBaselinePreviewId((current) => current === row.id ? null : current)}
+                  onFocus={() => setBaselinePreviewId(row.id)}
+                  onBlur={() => setBaselinePreviewId((current) => current === row.id ? null : current)}
+                >
                   <strong>{row.style_number ?? "No style"}</strong>
                   <span className="eyebrow">
                     {" "}· {row.factory_name ?? "Unassigned"} · {row.currency ?? "USD"} {row.total_cost?.toFixed(2) ?? "—"}
@@ -523,9 +633,33 @@ export function CreateRequestForm({
                       Open approved costing
                     </Link>
                   ) : null}
+                  {baselinePreviewId === row.id ? (
+                    <div className="baseline-quick-view" role="status">
+                      <strong>Quick view</strong>
+                      <span>Factory: {row.factory_name ?? "Unassigned"}</span>
+                      <span>Season: {row.season ?? "Unknown"}</span>
+                      <span>Brand: {row.brand ?? "Unknown"}</span>
+                      <span>Customer: {row.customer ?? "Unknown"}</span>
+                      <span>Cost: {row.currency ?? "USD"} {row.total_cost?.toFixed(2) ?? "—"}</span>
+                      <span>{[
+                        row.yarn_type && `Yarn: ${row.yarn_type}`,
+                        row.knit_type && `Knit: ${row.knit_type}`,
+                        row.machine_type && `Machine: ${row.machine_type}`,
+                        row.construction && `Construction: ${row.construction}`
+                      ].filter(Boolean).join(" · ") || "No construction details available"}</span>
+                    </div>
+                  ) : null}
                 </li>
               ))}
             </ul>
+            {baselineResults.length > 5 ? (
+              <div className="pagination-controls baseline-pagination">
+                <button className="button secondary small-btn" type="button" onClick={() => setBaselinePage((page) => Math.max(0, page - 1))} disabled={baselinePage === 0}>Previous 5</button>
+                <span className="eyebrow">Page {baselinePage + 1} of {Math.ceil(baselineResults.length / 5)}</span>
+                <button className="button secondary small-btn" type="button" onClick={() => setBaselinePage((page) => Math.min(Math.ceil(baselineResults.length / 5) - 1, page + 1))} disabled={(baselinePage + 1) * 5 >= baselineResults.length}>Next 5</button>
+              </div>
+            ) : null}
+            </>
           ) : baselineSearching ? null : baselineQuery.trim() ? (
             <p className="eyebrow">No historical costings match that search.</p>
           ) : null}
@@ -815,6 +949,9 @@ export function CreateRequestForm({
       <div className="form-actions">
         <button className="button" type="submit" disabled={state === "saving"}>
           {state === "saving" ? <><span className="spinner" /> Creating...</> : "Create Draft"}
+        </button>
+        <button className="button secondary" type="button" onClick={clearSourceDetails} disabled={state === "saving"}>
+          Clear all fields
         </button>
         {forceCreateData ? (
           <button className="button secondary" type="button" onClick={createAnyway} disabled={state === "saving"}>

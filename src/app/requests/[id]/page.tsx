@@ -23,6 +23,8 @@ import { defaultWorkflowSettings, getWorkflowSettings } from "@/lib/admin/settin
 import { canRunPbdAction, canRunCostingAction, canRunMdAction, getCurrentRole, getCurrentUserId } from "@/lib/auth/roles";
 import { resolveFactoryProfileId } from "@/lib/admin/assignments";
 import { getChecklistResults } from "@/lib/costing/checklist";
+import { tryListChangeRequests } from "@/lib/costing/change-requests";
+import { getNextGenPricingForRequest } from "@/lib/costing/nextgen-pricing";
 import { tryGetLastOutlierAcknowledgement } from "@/lib/costing/outlier-review";
 import { tryGetCostingRequest } from "@/lib/costing/requests";
 import { tryListSavedComparisonSetsForRequest } from "@/lib/comparison-sets";
@@ -46,6 +48,9 @@ import { PbdPricingPanel } from "@/components/pbd-pricing-panel";
 import { MdReviewPanel } from "@/components/md-review-panel";
 import { MasterBenchmarkPanel } from "@/components/master-benchmark-panel";
 import { flagCbdAgainstMasterBenchmark } from "@/lib/costing/master-benchmark";
+import { RequestCommentsPanel } from "@/components/request-comments-panel";
+import { ValidationFindingsPanel } from "@/components/validation-findings-panel";
+import { listRequestComments } from "@/lib/costing/request-comments";
 
 function getProduct(request: Awaited<ReturnType<typeof tryGetCostingRequest>>["data"]) {
   if (!request?.nextgen_products) return null;
@@ -138,7 +143,9 @@ export default async function RequestDetailPage({ params }: { params: { id: stri
     factoryPhotos,
     lastAcknowledgement,
     savedComparisonSets,
-    masterBenchmark
+    masterBenchmark,
+    requestComments,
+    nextGenPricing
   ] = await Promise.all([
     tryGetBenchmarkSummary(benchmarkParams),
     tryGetBenchmarkByAttributes(attributeParams),
@@ -159,7 +166,14 @@ export default async function RequestDetailPage({ params }: { params: { id: stri
           extractOperationsLines(latestCbd.raw_payload),
           extractKnittingLines(latestCbd.raw_payload)
         )
-      : Promise.resolve({ flags: [], benchmark: [], error: null })
+      : Promise.resolve({ flags: [], benchmark: [], error: null }),
+    data ? listRequestComments(data.id, role).catch(() => []) : Promise.resolve([]),
+    // Selling / landed-cost figures ported from NextGen. Resolved through the
+    // single pricing owner, which lazily pulls the ERP product-grid row when
+    // the stored snapshot has none — PBD never types what NextGen knows.
+    data
+      ? getNextGenPricingForRequest(data.id)
+      : Promise.resolve({ sellingPrice: null, landedCost: null, purchasePrice: null, margin: null, currency: null })
   ]);
 
   const status = isCostingStatus(data.status) ? data.status : "draft";
@@ -172,7 +186,7 @@ export default async function RequestDetailPage({ params }: { params: { id: stri
       redirect("/factory");
     }
   }
-  // Factory must not see requests that are with Madison88 (MD/Costing/PBD/Manager)
+  // Factory must not see requests that are in Madison88 internal review (MD, Costing, or PBD).
   // or that are internally approved — those are invisible to the factory.
   if (role === "factory" && factoryHiddenStatuses.includes(status)) {
     redirect("/");
@@ -195,13 +209,16 @@ export default async function RequestDetailPage({ params }: { params: { id: stri
       return (item.metadata as { decision?: string } | null)?.decision === "needs_clarification";
     })
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0] ?? null;
-  // The PBD-entered selling price is the real customer-facing number; the
-  // totals' wholesalePrice is only the derived markup estimate. Merge the
-  // actual price in so the low-margin flag and Approval banner reflect the
-  // pricing under discussion (never the factory-derived estimate).
+  // The customer-facing number is the manual PBD price first, then the
+  // NextGen-ported selling price, and only then the derived markup estimate.
+  // Merge the actual price in so the low-margin flag and Approval banner
+  // reflect the pricing under discussion (never the factory-derived estimate
+  // when a real price exists).
   const pbdPricing = (data?.pbd_pricing ?? {}) as Record<string, unknown>;
   const pbdWholesale = typeof pbdPricing.wholesalePrice === "number" ? pbdPricing.wholesalePrice : null;
-  const pricingTotals = totals && pbdWholesale !== null ? { ...totals, wholesalePrice: pbdWholesale } : totals;
+  const nextgenWholesale = nextGenPricing.sellingPrice;
+  const effectiveWholesale = pbdWholesale ?? nextgenWholesale;
+  const pricingTotals = totals && effectiveWholesale !== null ? { ...totals, wholesalePrice: effectiveWholesale } : totals;
 
   const smartReview = generateSmartReviewSync(
     {
@@ -227,6 +244,12 @@ export default async function RequestDetailPage({ params }: { params: { id: stri
   const latestDiff = cbdDiff.result;
   const latestDiffImpact = latestDiff?.costImpacts[latestDiff.costImpacts.length - 1];
   const latestDiffChangedCount = latestDiff?.diffs[latestDiff.diffs.length - 1]?.filter((d) => d.changed).length ?? 0;
+  // Open structured change requests surface as a warning (never a block) at
+  // the PBD decision point, so nothing gets approved sight-unseen.
+  const { data: changeRequestRows } = await tryListChangeRequests(data.id);
+  const openChangeRequests = (changeRequestRows ?? [])
+    .filter((row) => row.status === "open")
+    .map((row) => ({ field: row.field_label || row.field_key, requestedValue: row.requested_value }));
 
   // NextGen metadata captured at request creation (from the product raw_payload).
   const productMeta = product ? nextGenMetaFromRaw(product.raw_payload) : null;
@@ -274,6 +297,7 @@ export default async function RequestDetailPage({ params }: { params: { id: stri
             canAct={canRunPbdAction(role)}
             canCostingAct={canRunCostingAction(role)}
             pricingReady={data?.pbd_pricing_status === "entered"}
+            openChanges={openChangeRequests}
           />
         </div>
       </div>
@@ -537,24 +561,8 @@ export default async function RequestDetailPage({ params }: { params: { id: stri
                     ) : (
                       <CostingSummary totals={totals} cbdData={cbdData} baselineRef={data?.baseline_ref ?? null} role={role} />
                     )}
-                    <section className="panel">
-                      <h2>Validation</h2>
-                      <ul className="list">
-                        {validation.length
-                          ? validation.map((item) => (
-                              <li key={item.id}>
-                                <span className={`status ${item.severity === "error" ? "red" : item.severity === "warning" ? "amber" : "blue"}`}>
-                                  {item.severity}
-                                </span>
-                                <br />
-                                <strong>{item.field_path ?? item.rule_code}</strong>
-                                <br />
-                                {item.message}
-                              </li>
-                            ))
-                          : <li className="eyebrow">No validation findings.</li>}
-                      </ul>
-                    </section>
+                    <ValidationFindingsPanel requestId={params.id} issues={validation} canOpenCbd={status === "sent_to_factory" || status === "needs_clarification" || status === "draft"} />
+                    <RequestCommentsPanel requestId={params.id} initialComments={requestComments} role={role} />
                   </div>
                 )
               },
@@ -611,18 +619,25 @@ export default async function RequestDetailPage({ params }: { params: { id: stri
                 label: "Costing Review",
                 content: (
                   <div className="grid">
-                    <LikeStylesPanel
-                      rows={likeStyles}
-                      requestId={params.id}
-                      requestNumber={requestNumber}
-                      attributes={likeStylesParams}
-                      benchmark={attributeBenchmark.data}
-                      savedSets={savedComparisonSets.data}
-                      canRecordComparison={canRunCostingAction(role)}
-                    />
-                    <section className="panel">
-                      <VendorComparisonPanel requestId={params.id} canEdit={canRunPbdAction(role)} />
-                    </section>
+                    {/* Comparable costs, rival quotes, benchmarks, and costing
+                        notes are other-factories' money and internal pricing
+                        talk — never rendered for the factory. */}
+                    {role !== "factory" ? (
+                      <LikeStylesPanel
+                        rows={likeStyles}
+                        requestId={params.id}
+                        requestNumber={requestNumber}
+                        attributes={likeStylesParams}
+                        benchmark={attributeBenchmark.data}
+                        savedSets={savedComparisonSets.data}
+                        canRecordComparison={canRunCostingAction(role)}
+                      />
+                    ) : null}
+                    {role !== "factory" ? (
+                      <section className="panel">
+                        <VendorComparisonPanel requestId={params.id} canEdit={canRunPbdAction(role)} />
+                      </section>
+                    ) : null}
                     {/* What-If Analyzer shows landed cost + markups — internal only. */}
                     {role !== "factory" && totals && status !== "draft" ? (
                       <section className="panel">
@@ -663,16 +678,20 @@ export default async function RequestDetailPage({ params }: { params: { id: stri
                         />
                       </section>
                     ) : null}
-                    <BenchmarkPanel
-                      benchmark={benchmark.data}
-                      attributeBenchmark={attributeBenchmark.data}
-                      currentConsumption={currentConsumption}
-                      currentKnittingTime={currentKnittingTime}
-                      error={benchmark.error}
-                      warningVariancePercent={workflowSettings.warningVariancePercent}
-                      reviewVariancePercent={workflowSettings.reviewVariancePercent}
-                    />
-                    <CostingNotesPanel notes={costingNotes.data} error={costingNotes.error} />
+                    {role !== "factory" ? (
+                      <BenchmarkPanel
+                        benchmark={benchmark.data}
+                        attributeBenchmark={attributeBenchmark.data}
+                        currentConsumption={currentConsumption}
+                        currentKnittingTime={currentKnittingTime}
+                        error={benchmark.error}
+                        warningVariancePercent={workflowSettings.warningVariancePercent}
+                        reviewVariancePercent={workflowSettings.reviewVariancePercent}
+                      />
+                    ) : null}
+                    {role !== "factory" ? (
+                      <CostingNotesPanel notes={costingNotes.data} error={costingNotes.error} />
+                    ) : null}
                   </div>
                 )
               },
@@ -691,6 +710,11 @@ export default async function RequestDetailPage({ params }: { params: { id: stri
                         pricing={data?.pbd_pricing as Record<string, unknown> | null | undefined}
                         pricingStatus={data?.pbd_pricing_status}
                         canEdit={canRunPbdAction(role)}
+                        nextgenSellingPrice={nextGenPricing.sellingPrice}
+                        nextgenLandedCost={nextGenPricing.landedCost}
+                        nextgenMargin={nextGenPricing.margin}
+                        nextgenPurchasePrice={nextGenPricing.purchasePrice}
+                        nextgenCurrency={nextGenPricing.currency}
                       />
                     )}
                     {/* Low-margin soft flag, front and center for PBD's manual

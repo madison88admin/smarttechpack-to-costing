@@ -39,7 +39,7 @@ function baseResponder(status: string, overrides: Partial<Responder> = {}): Resp
         ? { data: { id: "cbd-1", submitted_at: "2026-08-10T00:00:00Z", raw_payload: { grandTotal: 10, currency: "USD", yarnType: "Cotton", knitType: "Jersey", machineType: "Flat", knittingTime: 0.4 }, cbd_material_lines: [{ consumption: 0.2, total_cost: 10, currency: "USD", material_name: "Yarn" }] }, error: null }
         : { data: { id: "cbd-1", raw_payload: { grandTotal: 10, currency: "USD" } }, error: null },
     },
-    historical_costings: { select: () => ({ data: [], error: null }), delete: () => ({ data: [], error: null }), insert: () => ({ data: [], error: null }) },
+    historical_costings: { maybeSingle: () => ({ data: null, error: null }), select: () => ({ data: [], error: null }), delete: () => ({ data: [], error: null }), insert: () => ({ data: [], error: null }) },
     workflow_events: { insert: () => ({ data: [], error: null }) },
     workflow_settings: { single: () => ({ data: { key: "manager_approval_threshold", value: "15" }, error: null }) },
     validation_checklist_items: { select: () => ({ data: [], error: null }) },

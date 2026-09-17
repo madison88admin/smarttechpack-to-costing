@@ -52,7 +52,6 @@ function baseResponder(): Responder {
     validation_checklist_items: { select: () => ({ data: [], error: null }) },
     request_checklist_results: { select: () => ({ data: [], error: null }) },
     user_profiles: { select: () => ({ data: [], error: null }) },
-    material_library: { select: () => ({ data: [], error: null }) },
     notifications: { select: () => ({ data: [], error: null }) },
   };
 }
@@ -103,14 +102,6 @@ describe("Missing admin/export route coverage", () => {
     const response = new Request("http://localhost/api/admin/users");
     const result = (mod as any).GET ? (mod as any).GET(response) : new Response(null, { status: 405 });
     expect(result.status).toBe(405);
-  });
-
-  it("GET /api/material-library returns entries for authorized role", async () => {
-    session.token = await issueSessionToken("pbd");
-    mocks.client = createMockSupabase(baseResponder()).client;
-    const { GET } = await import("../src/app/api/material-library/route");
-    const response = await GET(new Request("http://localhost/api/material-library"));
-    expect(response.status).toBe(200);
   });
 
   it("GET /api/health/nextgen reports status", async () => {

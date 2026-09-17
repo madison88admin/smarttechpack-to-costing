@@ -18,6 +18,26 @@ type RequestRow = {
   status: string;
 };
 
+export type EmailTransport = "microsoft-graph" | "smtp" | "dev-console" | "none";
+
+// Which transport, if any, can actually carry an email right now. Mirrors the
+// precedence inside sendEmail() so the queue never queues work it cannot send.
+// Outside production a missing transport is fine — sendEmail() logs instead.
+export function emailTransport(): EmailTransport {
+  if (process.env.MS_GRAPH_TENANT_ID && process.env.MS_GRAPH_CLIENT_ID && process.env.MS_GRAPH_CLIENT_SECRET) {
+    return "microsoft-graph";
+  }
+  if (process.env.SMTP_URL) return "smtp";
+  return process.env.NODE_ENV === "production" ? "none" : "dev-console";
+}
+
+export function sendableChannels(): string[] {
+  const channels: string[] = [];
+  if (emailTransport() !== "none") channels.push("email", "reminder", "escalation");
+  if (process.env.TEAMS_WEBHOOK_URL) channels.push("teams");
+  return channels;
+}
+
 export async function enqueueNotificationsForPendingEvents() {
   const supabase = createSupabaseServiceClient();
   const settings = await getWorkflowSettings();
@@ -144,10 +164,25 @@ function renderTemplate(template: string, request: RequestRow | null, payload: R
 export async function processNotificationQueue() {
   const supabase = createSupabaseServiceClient();
 
+  // Selecting only sendable channels keeps two failure modes away: burning a
+  // row's three attempts on a transport that does not exist (which is how the
+  // permanently-failed backlog built up), and letting a blocked channel starve
+  // the rows behind it — an unconfigured email transport must not stop Teams
+  // notifications, or a Teams handoff must not stop email.
+  const sendableChannelNames = sendableChannels();
+  if (sendableChannelNames.length === 0) {
+    return {
+      sent: 0,
+      failed: 0,
+      skipped: "No notification transport configured (Microsoft Graph, SMTP or TEAMS_WEBHOOK_URL)"
+    };
+  }
+
   const { data: notifications, error } = await supabase
     .from("notification_queue")
     .select("id, channel, recipient, subject, body, attempts")
     .eq("status", "pending")
+    .in("channel", sendableChannelNames)
     .order("created_at", { ascending: true })
     .limit(20);
 
@@ -197,6 +232,88 @@ export async function processNotificationQueue() {
   }
 
   return { sent, failed };
+}
+
+export type RequeueResult = {
+  requeued: number;
+  transport: EmailTransport;
+  channels: string[];
+  skipped?: string;
+};
+
+// Resets permanently-failed queue rows so they retry. Rows only reach `failed`
+// after three real send errors and never leave it, so once an email transport is
+// configured this is the switch that makes the parked backlog deliverable again.
+//
+// Without a transport the update is deliberately refused: requeueing into a
+// transport that cannot send would just walk every row back to `failed` and
+// spend its attempts again. `force` overrides that for the case where the rows
+// are being parked for a later drain.
+export async function requeueFailedNotifications(options: { force?: boolean } = {}): Promise<RequeueResult> {
+  const supabase = createSupabaseServiceClient();
+  const transport = emailTransport();
+  const sendableChannelNames = sendableChannels();
+
+  if (sendableChannelNames.length === 0 && !options.force) {
+    return {
+      requeued: 0,
+      transport,
+      channels: sendableChannelNames,
+      skipped: "No email transport configured yet — failed notifications stay parked until Microsoft Graph, SMTP or TEAMS_WEBHOOK_URL is set"
+    };
+  }
+
+  const base = supabase
+    .from("notification_queue")
+    .update({ status: "pending", attempts: 0, last_error: null })
+    .eq("status", "failed");
+
+  const { data, error } = await (options.force ? base : base.in("channel", sendableChannelNames)).select("id");
+  if (error) throw error;
+
+  return { requeued: (data ?? []).length, transport, channels: sendableChannelNames };
+}
+
+export type QueueSummary = {
+  transport: EmailTransport;
+  channels: string[];
+  pending: number;
+  sent: number;
+  failed: number;
+  lastError: string | null;
+};
+
+// Health of the outbound queue for the admin panel: what the transport can
+// carry, how much is waiting, and why the last failure happened.
+export async function notificationQueueSummary(): Promise<QueueSummary> {
+  const supabase = createSupabaseServiceClient();
+
+  const countOf = async (status: string) => {
+    const { count, error } = await supabase
+      .from("notification_queue")
+      .select("id", { count: "exact", head: true })
+      .eq("status", status);
+    if (error) throw error;
+    return count ?? 0;
+  };
+
+  const [pending, sent, failed] = await Promise.all([countOf("pending"), countOf("sent"), countOf("failed")]);
+
+  const { data: lastFailed } = await supabase
+    .from("notification_queue")
+    .select("last_error")
+    .eq("status", "failed")
+    .order("created_at", { ascending: false })
+    .limit(1);
+
+  return {
+    transport: emailTransport(),
+    channels: sendableChannels(),
+    pending,
+    sent,
+    failed,
+    lastError: (lastFailed?.[0] as { last_error: string | null } | undefined)?.last_error ?? null
+  };
 }
 
 async function sendEmail(to: string, subject: string, body: string) {

@@ -98,6 +98,7 @@ function responder(overrides: {
           : { data: { id: "cbd-1", submitted_at: "2026-08-10T00:00:00Z", raw_payload: cbdPayload }, error: null }
     },
     historical_costings: {
+      maybeSingle: () => ({ data: null, error: null }),
       select: () => ({ data: historical, error: null }),
       delete: () => ({ data: [], error: null }),
       insert: () => ({ data: [], error: null })

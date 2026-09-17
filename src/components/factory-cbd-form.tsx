@@ -1,10 +1,11 @@
 "use client";
 
-import { useRef, useState, type FormEvent } from "react";
+import { Fragment, useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "@/components/ui/toast";
-import { IconCheck, IconArrowLeft, IconArrowRight, IconPlus, IconTrash } from "@/components/ui/icons";
+import { IconCheck, IconArrowLeft, IconArrowRight, IconPlus, IconTrash, IconAlert } from "@/components/ui/icons";
 import { FactoryPhotoUpload } from "@/components/factory-photo-upload";
+import { Tooltip } from "@/components/ui/tooltip";
 
 type BomLine = {
   id: string;
@@ -91,6 +92,16 @@ type FabricLine = { name: string; consumption: string; materialPrice: string; ma
 type TrimLine = { name: string; consumption: string; materialPrice: string; materialCost: string };
 type KnittingLine = { machineType: string; knittingTime: string; sah: string; knittingCost: string };
 type OperationLine = { operation: string; operationCost: string };
+type RevisionChange = {
+  field: string;
+  fieldKey: string;
+  section: string;
+  oldValue: string;
+  newValue: string;
+  /** Set for reviewer-requested targets (open change requests) as opposed to
+      already-applied revision diffs. Requested rows render as targets. */
+  requested?: boolean;
+};
 
 // Default lines from Excel template (pre-filled in blank template)
 const DEFAULT_YARN_LINES: YarnLine[] = [
@@ -112,7 +123,10 @@ export function FactoryCbdForm({
   existingCbd,
   readOnly = false,
   prefill,
-  baselineRef = null
+  baselineRef = null,
+  initialStep = 0,
+  revisionChange = null,
+  revisionChanges = []
 }: {
   requestId: string;
   bomLines: BomLine[];
@@ -126,13 +140,34 @@ export function FactoryCbdForm({
   };
   /** Read-only reference to the approved costing this request was copied from. */
   baselineRef?: import("@/lib/costing/history").BaselineRef | null;
+  /** Deep links from validation findings open the exact CBD step. */
+  initialStep?: StepIndex;
+  /** A comparison deep link identifies the precise field changed in a prior CBD revision. */
+  revisionChange?: {
+    field: string;
+    fieldKey: string;
+    section: string;
+    oldValue: string;
+    newValue: string;
+    requested?: boolean;
+  } | null;
+  /** All changed inputs in the CBD version being viewed. */
+  revisionChanges?: RevisionChange[];
 }) {
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const header = getHeaderDefaults(existingCbd?.raw_payload);
   const [state, setState] = useState<SaveState>("idle");
   const [message, setMessage] = useState("");
-  const [currentStep, setCurrentStep] = useState<StepIndex>(0);
+  const [currentStep, setCurrentStep] = useState<StepIndex>(initialStep);
+
+  // Deep links (?step=N from validation findings, diff pages, and requested
+  // changes) must actually jump: useState only reads initialStep on mount, so
+  // sync when the parent navigates to a new step. Manual Back/Next clicks use
+  // goToStep directly and never change the prop, so this cannot fight typing.
+  useEffect(() => {
+    setCurrentStep(initialStep);
+  }, [initialStep]);
 
   // Initialize line items from existing CBD or template defaults
   const existing = getExistingLines(existingCbd?.raw_payload);
@@ -158,6 +193,19 @@ export function FactoryCbdForm({
     styleName: header.styleName ?? prefill?.styleName ?? "",
     leadTimeDays: header.leadTimeDays ?? ""
   });
+  const allRevisionChanges = revisionChanges.length > 0 ? revisionChanges : revisionChange ? [revisionChange] : [];
+  const changeForField = (fieldKey: string) => allRevisionChanges.find((change) => change.fieldKey === fieldKey) ?? null;
+  const isChangedField = (fieldKey: string) => Boolean(changeForField(fieldKey));
+  const revisionFieldClass = (fieldKey: string, base = "input") => `${base}${isChangedField(fieldKey) ? " cbd-revision-field" : ""}`;
+  const revisionFieldHint = (fieldKey: string) => {
+    const change = changeForField(fieldKey);
+    if (!change) return null;
+    return (
+      <p className="cbd-revision-field-hint" role="status">
+        <IconAlert size={13} /> {change.requested ? "Requested" : "Changed"}: <s>{change.oldValue}</s> → <strong>{change.newValue}</strong>
+      </p>
+    );
+  };
 
   // Computed totals
   const yarnTotal = yarnLines.reduce((sum, l) => sum + (parseFloat(l.materialCost) || 0), 0);
@@ -417,6 +465,20 @@ export function FactoryCbdForm({
         </p>
       ) : null}
 
+      {allRevisionChanges.length > 0 ? (
+        <div className="notice" style={{ marginBottom: 12, borderColor: "rgba(245, 158, 11, 0.55)", background: "rgba(245, 158, 11, 0.08)" }}>
+          <strong><IconAlert size={15} /> {allRevisionChanges.every((change) => change.requested) ? `Requested changes (${allRevisionChanges.length})` : `Changes in this CBD revision (${allRevisionChanges.length})`}</strong>
+          <p className="eyebrow" style={{ margin: "6px 0 8px" }}>{allRevisionChanges.every((change) => change.requested) ? "The reviewer asked for these exact values. Update each highlighted input, then resubmit." : "Changed sections and inputs are highlighted below. Compare every value before continuing."}</p>
+          <ul className="cbd-revision-summary-list">
+            {allRevisionChanges.map((change) => (
+              <li key={change.fieldKey}>
+                <strong>{change.section} · {change.field}:</strong> <s>{change.oldValue}</s> → <strong>{change.newValue}</strong>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
       {baselineRef ? (
         <div className="baseline-banner" style={{ marginBottom: 16 }}>
           <div>
@@ -442,10 +504,13 @@ export function FactoryCbdForm({
       <div className="step-list wizard">
         {STEPS.map((label, index) => {
           const stepState = index < currentStep ? "done" : index === currentStep ? "current" : "pending";
+          const stepChanges = allRevisionChanges.filter((change) => change.section === label);
+          const isRevisionStep = stepChanges.length > 0;
+          const stepRequestedOnly = isRevisionStep && stepChanges.every((change) => change.requested);
           return (
-            <button key={label} type="button" className={`step ${stepState}`} onClick={() => goToStep(index as StepIndex)}>
+            <button key={label} type="button" className={`step ${stepState}${isRevisionStep ? " step-revision-target" : ""}`} onClick={() => goToStep(index as StepIndex)} aria-label={`${label}${isRevisionStep ? `: contains ${stepChanges.length} CBD change${stepChanges.length === 1 ? "" : "s"}` : ""}`}>
               <span className="step-number">{index < currentStep ? <IconCheck size={14} /> : index + 1}</span>
-              <span className="step-label">{label}</span>
+              <span className="step-label">{label}</span>{isRevisionStep ? <span className="step-revision-badge">{stepChanges.length} {stepRequestedOnly ? "requested" : "changed"}</span> : null}
             </button>
           );
         })}
@@ -513,7 +578,8 @@ export function FactoryCbdForm({
           </div>
           <div className="field">
             <label htmlFor="machineType">Machine Type</label>
-            <input id="machineType" name="machineType" className="input" placeholder="e.g. Flat-12GG" defaultValue={header.machineType ?? ""} disabled={readOnly} />
+            <input id="machineType" name="machineType" className={revisionFieldClass("machineType")} placeholder="e.g. Flat-12GG" defaultValue={header.machineType ?? ""} disabled={readOnly} />
+            {revisionFieldHint("machineType")}
           </div>
           <div className="field">
             <label htmlFor="construction">Construction</label>
@@ -556,7 +622,7 @@ export function FactoryCbdForm({
           </thead>
           <tbody>
             {yarnLines.map((line, i) => (
-              <>
+              <Fragment key={`yarn-line-${i}`}>
                 <tr key={`row-${i}`}>
                   <td>
                     <input className="input table-input" placeholder="Yarn name & specs" value={line.name} onChange={(e) => updateYarnLine(i, "name", e.target.value)} disabled={readOnly} />
@@ -583,22 +649,30 @@ export function FactoryCbdForm({
                   <tr key={`calc-${i}`}>
                     <td colSpan={5} style={{ background: "var(--surface-2, #f8f9fa)", padding: "12px 16px" }}>
                       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, alignItems: "end" }}>
-                        <div className="field" style={{ margin: 0 }}>
-                          <label style={{ fontSize: 11 }}>FOB Price (USD/kg)</label>
+                      <div className="field" style={{ margin: 0 }}>
+                        <label style={{ fontSize: 11 }}>FOB Price (USD/kg)</label>
+                        <Tooltip text="Free On Board price per kg, excluding freight and insurance">
                           <input className="input table-input" type="number" step="any" placeholder="e.g. 5.05" value={line.fobPrice} onChange={(e) => updateYarnLine(i, "fobPrice", e.target.value)} disabled={readOnly} />
-                        </div>
-                        <div className="field" style={{ margin: 0 }}>
-                          <label style={{ fontSize: 11 }}>Surcharge (%)</label>
+                        </Tooltip>
+                      </div>
+                      <div className="field" style={{ margin: 0 }}>
+                        <label style={{ fontSize: 11 }}>Surcharge (%)</label>
+                        <Tooltip text="Additional percentage added to FOB (e.g. 20% for minimum order surcharge)">
                           <input className="input table-input" type="number" step="any" placeholder="e.g. 20" value={line.surchargePercent} onChange={(e) => updateYarnLine(i, "surchargePercent", e.target.value)} disabled={readOnly} />
-                        </div>
-                        <div className="field" style={{ margin: 0 }}>
-                          <label style={{ fontSize: 11 }}>Freight (USD/kg)</label>
+                        </Tooltip>
+                      </div>
+                      <div className="field" style={{ margin: 0 }}>
+                        <label style={{ fontSize: 11 }}>Freight (USD/kg)</label>
+                        <Tooltip text="Shipping and handling cost per kg from factory to destination">
                           <input className="input table-input" type="number" step="any" placeholder="e.g. 0.36" value={line.freightCost} onChange={(e) => updateYarnLine(i, "freightCost", e.target.value)} disabled={readOnly} />
-                        </div>
-                        <div className="field" style={{ margin: 0 }}>
-                          <label style={{ fontSize: 11 }}>Markup (%)</label>
+                        </Tooltip>
+                      </div>
+                      <div className="field" style={{ margin: 0 }}>
+                        <label style={{ fontSize: 11 }}>Markup (%)</label>
+                        <Tooltip text="Factory margin percentage applied to material cost">
                           <input className="input table-input" type="number" step="any" placeholder="e.g. 15" value={line.markupPercent} onChange={(e) => updateYarnLine(i, "markupPercent", e.target.value)} disabled={readOnly} />
-                        </div>
+                        </Tooltip>
+                      </div>
                       </div>
                       <div style={{ marginTop: 8, fontSize: 12, color: "var(--text-muted, #666)" }}>
                         <strong>Formula:</strong> ((FOB × (1 + Surcharge%)) + Freight) × (1 + Markup%) = Material Price
@@ -612,7 +686,7 @@ export function FactoryCbdForm({
                     </td>
                   </tr>
                 )}
-              </>
+              </Fragment>
             ))}
             {yarnLines.length === 0 && (
               <tr><td colSpan={5} className="text-center text-muted">No yarn lines. Click &quot;Add Yarn&quot; to add one.</td></tr>
@@ -716,10 +790,11 @@ export function FactoryCbdForm({
             {knittingLines.map((line, i) => (
               <tr key={i}>
                 <td>
-                  <select className="input table-input" value={line.machineType} onChange={(e) => updateKnittingLine(i, "machineType", e.target.value)} disabled={readOnly}>
+                  <select className={revisionFieldClass(`knittingLines.${i}.machineType`, "input table-input")} value={line.machineType} onChange={(e) => updateKnittingLine(i, "machineType", e.target.value)} disabled={readOnly}>
                     <option value="">Select machine...</option>
                     {KNITTING_REFERENCE.map(k => <option key={k} value={k}>{k}</option>)}
                   </select>
+                  {revisionFieldHint(`knittingLines.${i}.machineType`)}
                 </td>
                 <td><input className="input table-input" type="number" step="any" placeholder="0" value={line.knittingTime} onChange={(e) => updateKnittingLine(i, "knittingTime", e.target.value)} disabled={readOnly} /></td>
                 <td><input className="input table-input" type="number" step="any" placeholder="0.00" value={line.sah} onChange={(e) => updateKnittingLine(i, "sah", e.target.value)} disabled={readOnly} /></td>
@@ -779,7 +854,8 @@ export function FactoryCbdForm({
         <div className="form-grid">
           <div className="field">
             <label htmlFor="standardPackagingCost">Standard Packaging Cost (USD)</label>
-            <input id="standardPackagingCost" name="standardPackagingCost" className="input" placeholder="0.10" value={costFields.standardPackagingCost} onChange={(event) => setCostFields((current) => ({ ...current, standardPackagingCost: event.target.value }))} disabled={readOnly} />
+            <input id="standardPackagingCost" name="standardPackagingCost" className={revisionFieldClass("standardPackagingCost")} placeholder="0.10" value={costFields.standardPackagingCost} onChange={(event) => setCostFields((current) => ({ ...current, standardPackagingCost: event.target.value }))} disabled={readOnly} />
+            {revisionFieldHint("standardPackagingCost")}
             <p className="eyebrow" style={{ marginTop: 4, fontSize: 11 }}>
               Options: {PACKAGING_REFERENCE.join(", ")}
             </p>
@@ -802,7 +878,8 @@ export function FactoryCbdForm({
           </div>
           <div className="field">
             <label htmlFor="profitCost">Profit (USD)</label>
-            <input id="profitCost" name="profitCost" className="input" placeholder="0.26" value={costFields.profitCost} onChange={(event) => setCostFields((current) => ({ ...current, profitCost: event.target.value }))} disabled={readOnly} />
+            <input id="profitCost" name="profitCost" className={revisionFieldClass("profitCost")} placeholder="0.26" value={costFields.profitCost} onChange={(event) => setCostFields((current) => ({ ...current, profitCost: event.target.value }))} disabled={readOnly} />
+            {revisionFieldHint("profitCost")}
           </div>
         </div>
         <div className="field full" style={{ marginTop: 8 }}>
@@ -824,7 +901,8 @@ export function FactoryCbdForm({
         <h3>Notes & Learnings</h3>
         <div className="field full" style={{ marginTop: 16 }}>
           <label htmlFor="notes">Factory Notes</label>
-          <textarea id="notes" name="notes" className="input textarea" defaultValue={header.notes ?? ""} disabled={readOnly}></textarea>
+          <textarea id="notes" name="notes" className={revisionFieldClass("notes", "input textarea")} defaultValue={header.notes ?? ""} disabled={readOnly}></textarea>
+          {revisionFieldHint("notes")}
         </div>
         <div className="field full" style={{ marginTop: 16 }}>
           <label htmlFor="costingLearning">Costing Notes / Learnings</label>

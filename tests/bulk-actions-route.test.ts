@@ -78,6 +78,7 @@ function approveResponder(): Responder {
       maybeSingle: () => ({ data: { id: "cbd-1", raw_payload: { grandTotal: 10, landedCost: 0, currency: "USD" } }, error: null })
     },
     historical_costings: {
+      maybeSingle: () => ({ data: null, error: null }),
       delete: () => ({ data: [], error: null }),
       insert: () => ({ data: [], error: null })
     },

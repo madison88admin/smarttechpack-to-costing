@@ -78,13 +78,14 @@ describe("getDailyDigestData", () => {
       revisions: [],
       diffs: [
         [
-          { field: "laborCost", oldValue: "5", newValue: "6", changed: true, deltaPercent: 20 },
-          { field: "moq", oldValue: "500", newValue: "500", changed: false, deltaPercent: null }
+          { fieldKey: "laborCost", field: "laborCost", section: "Header Info", oldValue: "5", newValue: "6", changed: true, changeType: "changed", deltaPercent: 20 },
+          { fieldKey: "moq", field: "moq", section: "Header Info", oldValue: "500", newValue: "500", changed: false, changeType: "changed", deltaPercent: null }
         ]
       ],
       costImpacts: [
         { fobBefore: 7.8, fobAfter: 8.9, fobDelta: 1.1, fobDeltaPercent: 14.1, landedBefore: 0, landedAfter: 0, landedDelta: 0, landedDeltaPercent: 0, currency: "USD" }
-      ]
+      ],
+      clarificationRequests: [null]
     });
 
     const { client } = createMockSupabase(digestResponder());

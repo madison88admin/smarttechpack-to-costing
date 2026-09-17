@@ -19,6 +19,8 @@ export type AgingRow = {
   style_number: string | null;
   /** Who is accountable for the current status (role). */
   owner_role: string | null;
+  /** Factory-profile assignment. Used to prevent one factory user from seeing another factory's SLA queue. */
+  assigned_factory_user_id?: string | null;
   /** When the request entered its current status (updated_at). */
   started_at: string;
   /** SLA deadline (started_at + sla_days). */
@@ -53,6 +55,7 @@ export async function getAgingData(): Promise<{ rows: AgingRow[]; settings: Work
       request_number,
       status,
       factory_name,
+      assigned_factory_user_id,
       created_at,
       updated_at,
       nextgen_products (style_number)
@@ -87,6 +90,7 @@ export async function getAgingData(): Promise<{ rows: AgingRow[]; settings: Work
       sla_days: slaDays,
       style_number: product?.style_number ?? null,
       owner_role: ownerRoleForStatus(row.status),
+      assigned_factory_user_id: row.assigned_factory_user_id ?? null,
       started_at: startedAt,
       deadline_at: deadlineAt,
       breached_at: isOverdue && deadlineAt ? deadlineAt : null
@@ -121,6 +125,19 @@ export function getAgingSummary(rows: AgingRow[]): AgingSummary {
     byStatus,
     averageDaysInStatus
   };
+}
+
+/**
+ * The SLA view is role-scoped: it shows the requests waiting for the current
+ * actor, not every team's overdue work. Factory rows are filtered separately
+ * by the caller using the authenticated assignment.
+ */
+export function scopeSlaRowsForRole(rows: AgingRow[], role: string, factoryProfileId?: string | null) {
+  const owner = role === "manager" ? "pbd" : role;
+  return rows.filter((row) =>
+    row.owner_role === owner
+    && (role !== "factory" || Boolean(factoryProfileId && row.assigned_factory_user_id === factoryProfileId))
+  );
 }
 
 export async function tryGetAgingData() {

@@ -8,6 +8,7 @@ import type { UserRole } from "@/lib/auth/roles";
 import { getChecklistResults } from "./checklist";
 import { enqueueRoleChangeAlert } from "@/lib/notifications/workflow-alerts";
 import { getOutlierReview, hasValidOutlierAcknowledgement, isHighRisk } from "./outlier-review";
+import { getNextGenPricingForRequest, resolveSellingPrice } from "./nextgen-pricing";
 
 const allowedActions: Record<string, CostingStatus> = {
   send_to_factory: "sent_to_factory",
@@ -100,7 +101,8 @@ export async function runCostingAction(
   comment?: string | null,
   actorRole?: string | null,
   actorName?: string | null,
-  actorUserId?: string | null
+  actorUserId?: string | null,
+  changeRequest?: Record<string, unknown> | null
 ) {
   const status = allowedActions[action];
 
@@ -124,7 +126,7 @@ export async function runCostingAction(
     await assertChecklistComplete(supabase, requestId);
   }
 
-  // PBD approval gates run before the combined PBD/Manager decision.
+  // PBD approval gates run before the internal approval decision.
   if (action === "approve") {
     await assertApprovalAllowed(supabase, requestId);
     await assertApprovalOutliersClear(supabase, requestId);
@@ -233,7 +235,10 @@ export async function runCostingAction(
     action,
     from_status: fromStatus,
     to_status: status,
-    comment: comment ?? defaultComment(action)
+    comment: comment ?? defaultComment(action),
+    // Never send null: the column is NOT NULL, and a JSON null would read
+    // back as missing metadata downstream. Empty object when no blob.
+    metadata: changeRequest ? { changeRequest } : {}
   });
 
   if (actionError) throw actionError;
@@ -246,9 +251,30 @@ export async function runCostingAction(
     payload: {
       fromStatus,
       toStatus: status,
-      comment: comment ?? defaultComment(action)
+      comment: comment ?? defaultComment(action),
+      changeRequest: changeRequest ?? null
     }
   });
+
+  // Notify the factory that work landed in their queue. Every other stage
+  // alerts the role that owns the next step (MD → costing → PBD, plus the
+  // factory on clarify/reject), so the initial handoff must too — otherwise
+  // the assignee is silent-notified only by the dashboard.
+  if (action === "send_to_factory") {
+    await enqueueRoleChangeAlert({
+      role: "factory",
+      requestId,
+      title: "New costing request sent to factory — CBD required",
+      bodyLines: [
+        comment ? `Comment: ${comment}` : "PBD sent this request to your factory for costing.",
+        "",
+        "Complete the cost breakdown (CBD) and submit it for MD technical review."
+      ],
+      alertType: "role_change"
+    }).catch(() => {
+      // Best-effort — never block the action on notification failures.
+    });
+  }
 
   // Notify PBD that costing validation finished and the request is ready for review.
   if (action === "costing_complete") {
@@ -365,7 +391,12 @@ async function assertApprovalAllowed(supabase: ReturnType<typeof createSupabaseS
     throw pricingError;
   }
   if (request?.pbd_pricing_status !== "entered") {
-    throw new Error("Cannot approve before PBD selling price review is entered.");
+    // NextGen-ported selling price satisfies the review: when the ERP already
+    // carries the style's selling price, PBD skips manual entry entirely.
+    const { sellingPrice } = await getNextGenPricingForRequest(requestId);
+    if (sellingPrice === null) {
+      throw new Error("Cannot approve before PBD selling price review is entered.");
+    }
   }
 
   const { data: mdReview, error: mdError } = await supabase
@@ -480,9 +511,14 @@ async function saveHistoricalCosting(
       `
       id,
       factory_name,
+      brand,
+      customer,
+      season,
+      pbd_pricing,
       nextgen_products (
         style_number,
-        name
+        name,
+        raw_payload
       )
     `
     )
@@ -532,13 +568,6 @@ async function saveHistoricalCosting(
     : request.nextgen_products;
   const styleNumber = product?.style_number ?? product?.name ?? null;
 
-  const { error: deleteError } = await supabase
-    .from("historical_costings")
-    .delete()
-    .eq("costing_request_id", requestId);
-
-  if (deleteError) throw deleteError;
-
   const materialNames = lines
     .filter((line) => !line.section || ["yarn", "fabric", "trim"].includes(String(line.section)))
     .map((line) => line.material_name)
@@ -554,11 +583,22 @@ async function saveHistoricalCosting(
     return true;
   });
 
-  const { error: insertError } = await supabase.from("historical_costings").insert({
+  const historyPayload = {
     costing_request_id: requestId,
     style_number: styleNumber,
     factory_name: request.factory_name,
-    total_cost: totals.grandTotal || null,
+    brand: request.brand,
+    customer: request.customer,
+    season: request.season,
+    total_cost: totals.grandTotal,
+    // Landed cost adds freight/duty/insurance/customs/inland to the FOB cost
+    // (equal to the FOB total when none were entered). Stored so the Like Styles
+    // machine table can weigh a machine's cost without reading raw payloads.
+    landed_cost: totals.landedCost > 0 ? totals.landedCost : totals.grandTotal,
+    // The real customer-facing price, same precedence as the margin panel:
+    // PBD-entered, else the NextGen-ported selling price. Null when unknown so
+    // no margin is ever derived from a missing price.
+    selling_price: resolveSellingPrice({ pbdPricing: request.pbd_pricing, nextGenRaw: product?.raw_payload }).price,
     currency: totals.currency,
     yarn_type: readText(cbd?.raw_payload, "yarnType"),
     knit_type: readText(cbd?.raw_payload, "knitType"),
@@ -568,7 +608,7 @@ async function saveHistoricalCosting(
     average_consumption: averageConsumption(materialLinesForAvg),
     knitting_time: readNumber(cbd?.raw_payload, "knittingTime"),
     approved_at: new Date().toISOString(),
-    searchable_text: [styleNumber, request.factory_name, product?.name, totals.currency, ...materialNames]
+    searchable_text: [styleNumber, request.factory_name, product?.name, request.brand, request.customer, request.season, totals.currency, ...materialNames]
       .filter(Boolean)
       .join(" "),
     raw_payload: {
@@ -576,7 +616,27 @@ async function saveHistoricalCosting(
       latestCbd: cbd,
       totals
     }
-  });
+  };
+  // Preserve the existing snapshot if a write fails; never delete before saving.
+  const { data: existing, error: lookupError } = await supabase.from("historical_costings")
+    .select("id").eq("costing_request_id", requestId).limit(1).maybeSingle();
+  if (lookupError) throw lookupError;
+
+  const writeHistory = (payload: Record<string, unknown>) =>
+    existing
+      ? supabase.from("historical_costings").update(payload).eq("costing_request_id", requestId)
+      : supabase.from("historical_costings").insert(payload);
+
+  let { error: insertError } = await writeHistory(historyPayload);
+  // Migration 018 pending: save the costing without the landed-cost / selling
+  // price columns rather than failing an approval, and pick them up on the next
+  // write once the columns exist.
+  if (insertError && /landed_cost|selling_price/.test(insertError.message)) {
+    const withoutCostColumns = { ...historyPayload } as Record<string, unknown>;
+    delete withoutCostColumns.landed_cost;
+    delete withoutCostColumns.selling_price;
+    ({ error: insertError } = await writeHistory(withoutCostColumns));
+  }
 
   if (insertError) throw insertError;
 }

@@ -56,7 +56,7 @@ function baseResponder(status: string, overrides: Partial<Responder> = {}): Resp
         ? { data: { id: "cbd-1", submitted_at: "2026-08-10T00:00:00Z", raw_payload: cbdPayload, cbd_material_lines: [{ consumption: 0.2, total_cost: 10, currency: "USD", material_name: "Yarn" }] }, error: null }
         : { data: { id: "cbd-1", submitted_at: "2026-08-10T00:00:00Z", raw_payload: cbdPayload }, error: null },
     },
-    historical_costings: { select: () => ({ data: [], error: null }), delete: () => ({ data: [], error: null }), insert: () => ({ data: [], error: null }) },
+    historical_costings: { maybeSingle: () => ({ data: null, error: null }), select: () => ({ data: [], error: null }), delete: () => ({ data: [], error: null }), insert: () => ({ data: [], error: null }) },
     workflow_events: { insert: () => ({ data: [], error: null }) },
     validation_checklist_items: { select: () => ({ data: [], error: null }) },
     request_checklist_results: {
@@ -285,7 +285,7 @@ describe("OUTLIER LIVE — high-risk cost/consumption gate (Tyler enforcement)",
           ? { data: { id: "cbd-1", submitted_at: "2026-08-10T00:00:00Z", raw_payload: payload, cbd_material_lines: overrides.lines }, error: null }
           : { data: { id: "cbd-1", submitted_at: "2026-08-10T00:00:00Z", raw_payload: payload }, error: null },
       },
-      historical_costings: { select: () => ({ data: overrides.historical, error: null }), delete: () => ({ data: [], error: null }), insert: () => ({ data: [], error: null }) },
+      historical_costings: { maybeSingle: () => ({ data: null, error: null }), select: () => ({ data: overrides.historical, error: null }), delete: () => ({ data: [], error: null }), insert: () => ({ data: [], error: null }) },
       approval_actions: {
         maybeSingle: (chain) => {
           const isAck = chain.eq?.some(([c, v]) => c === "action" && v === "outlier_acknowledged");
@@ -426,7 +426,7 @@ describe("BULK LIVE — approve many as PBD would from the register", () => {
             ? { data: { id: "cbd-a", submitted_at: "2026-08-10T00:00:00Z", raw_payload: { grandTotal: 10, currency: "USD", yarnType: "Cotton", knitType: "Jersey", machineType: "Flat", knittingTime: 0.4 }, cbd_material_lines: [{ consumption: 0.2, total_cost: 10, currency: "USD", material_name: "Yarn" }] }, error: null }
             : { data: { id: "cbd-a", raw_payload: { grandTotal: 10, currency: "USD" } }, error: null },
         },
-        historical_costings: { select: () => ({ data: hist, error: null }), delete: () => ({ data: [], error: null }), insert: () => ({ data: [], error: null }) },
+        historical_costings: { maybeSingle: () => ({ data: null, error: null }), select: () => ({ data: hist, error: null }), delete: () => ({ data: [], error: null }), insert: () => ({ data: [], error: null }) },
       }));
       mocks.client = client;
       const r = await runCostingAction("req-1", "approve", null, "pbd");
@@ -441,7 +441,7 @@ describe("BULK LIVE — approve many as PBD would from the register", () => {
             ? { data: { id: "cbd-b", submitted_at: "2026-08-10T00:00:00Z", raw_payload: { grandTotal: 10, currency: "USD", yarnType: "Cotton", knitType: "Jersey", machineType: "Flat", knittingTime: 0.4 }, cbd_material_lines: [{ consumption: 0.2, total_cost: 13, currency: "USD", material_name: "Yarn" }] }, error: null }
             : { data: { id: "cbd-b", raw_payload: { grandTotal: 10, currency: "USD" } }, error: null },
         },
-        historical_costings: { select: () => ({ data: hist, error: null }), delete: () => ({ data: [], error: null }), insert: () => ({ data: [], error: null }) },
+        historical_costings: { maybeSingle: () => ({ data: null, error: null }), select: () => ({ data: hist, error: null }), delete: () => ({ data: [], error: null }), insert: () => ({ data: [], error: null }) },
         approval_actions: {
           maybeSingle: (chain) => {
             const isAck = chain.eq?.some(([c, v]) => c === "action" && v === "outlier_acknowledged");

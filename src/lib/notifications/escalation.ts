@@ -144,7 +144,7 @@ async function enqueueEscalationNotification(
 
   const channel = isEscalation ? "escalation" : "reminder";
 
-  // Internal review stages (MD/Costing/PBD/Manager) are invisible to factory
+  // Internal review stages (MD, Costing, and PBD) are invisible to factory
   // users in the UI — the same rule must hold in email. Factory users are
   // excluded from reminders/escalations about internal statuses, so the
   // internal stage name can never leak to them.

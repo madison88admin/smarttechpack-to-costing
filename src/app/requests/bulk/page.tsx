@@ -181,16 +181,20 @@ export default function BulkCreatePage() {
   }
 
   return (
-    <div>
-      <div className="hero">
+    <div className="bulk-create-page">
+      <div className="hero bulk-hero">
         <div>
           <p className="eyebrow">PBD / Batch Operations</p>
           <h1>Bulk Create Costing Requests</h1>
           <p>Create multiple costing requests by validating style numbers against NextGen and loading BOM data before creation.</p>
         </div>
+        <div className="bulk-hero-note">
+          <strong>Before you begin</strong>
+          <span>Only styles with a valid NextGen BOM can be sent to Factory.</span>
+        </div>
       </div>
 
-      <div className="step-list" style={{ marginBottom: 20 }}>
+      <div className="step-list bulk-steps" aria-label="Bulk create progress">
         <div className={`step ${validationStage === "input" ? "current" : "done"}`}>
           <span className="step-number">1</span>
           <span>Enter Styles</span>
@@ -207,13 +211,17 @@ export default function BulkCreatePage() {
 
       {/* Step 1: Input */}
       {validationStage === "input" ? (
-        <section className="panel">
-          <h2>Step 1 — Enter Style Numbers</h2>
-          <p className="form-message" style={{ marginBottom: 12 }}>
-            Each style number will be validated against NextGen. Only styles with a valid BOM will be created.
-          </p>
+        <section className="panel bulk-entry-card">
+          <div className="section-heading bulk-entry-heading">
+            <div>
+              <p className="eyebrow">Step 1 of 3</p>
+              <h2>Enter style numbers</h2>
+              <p className="form-message">Add one style per line. You may optionally add a product name after a comma.</p>
+            </div>
+            <span className="bulk-required">NextGen validation required</span>
+          </div>
 
-          <div className="form-grid" style={{ marginBottom: 12 }}>
+          <div className="form-grid bulk-context-fields">
             <div className="field">
               <label htmlFor="factoryName">Factory Name (applies to all)</label>
               <input id="factoryName" className="input" value={factoryName} onChange={(e) => setFactoryName(e.target.value)} placeholder="e.g. Cebu Factory" />
@@ -232,19 +240,23 @@ export default function BulkCreatePage() {
             </div>
           </div>
 
-          <div className="field full">
-            <label htmlFor="csvInput">Style Numbers (one per line, or CSV: style_number,product_name)</label>
+          <div className="field full bulk-style-field">
+            <div className="bulk-style-label-row">
+              <label htmlFor="csvInput">Styles to create</label>
+              <span className="eyebrow">One per line or <code>style_number, product_name</code></span>
+            </div>
             <textarea
               id="csvInput"
               className="input textarea"
-              rows={10}
+              rows={8}
               value={csvText}
               onChange={(e) => setCsvText(e.target.value)}
               placeholder={"M88118568\nM8836232\nM8845678"}
             />
           </div>
 
-          <div className="form-actions" style={{ marginTop: 12 }}>
+          <div className="form-actions bulk-actions-row">
+            <span className="eyebrow">We will check every style and BOM before anything is created.</span>
             <button className="button" onClick={validateFromNextGen} disabled={!csvText.trim()}>
               <IconSearch size={16} /> Validate Against NextGen
             </button>

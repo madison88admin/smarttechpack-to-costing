@@ -129,11 +129,33 @@ export const bulkCreateSchema = z.object({
   customer: customerSchema
 });
 
+// Dismiss one open change request (reviewer accepts the deviation as-is or
+// withdraws the ask). Only open rows can flip; addressed rows are history.
+export const dismissChangeRequestSchema = z.object({
+  id: z.string().uuid(),
+  status: z.literal("dismissed")
+});
+
+// Structured per-field change request (reviewer asks factory to change one
+// exact CBD field). Shared by the dedicated change-requests route; the legacy
+// inline `changeRequest` key on actionSchema below uses the same shape.
+export const fieldChangeRequestSchema = z.object({
+  section: z.string().trim().min(1).max(100),
+  field: z.string().trim().min(1).max(160),
+  fieldKey: z.string().trim().min(1).max(200),
+  currentValue: z.string().max(2000),
+  requestedValue: z.string().trim().min(1).max(2000),
+  reason: z.string().trim().min(1).max(2000),
+  priority: z.enum(["low", "normal", "high", "urgent"]).default("normal"),
+  dueDate: z.string().date().optional()
+});
+
 // The action vocabulary is owned by src/lib/costing/actions.ts; this schema
 // accepts exactly the actions-route subset (everything except factory `submit`).
 export const actionSchema = z.object({
   action: z.enum(routeActionNames as [string, ...string[]]),
-  comment: z.string().trim().max(2000).optional()
+  comment: z.string().trim().max(2000).optional(),
+  changeRequest: fieldChangeRequestSchema.optional()
 });
 
 export const cbdLineItemSchema = z.object({

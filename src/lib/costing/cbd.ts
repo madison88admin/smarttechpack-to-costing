@@ -5,7 +5,8 @@ import { getBenchmarkSummary } from "./history";
 import { calculateCostingTotals } from "./totals";
 import { hasBlockingIssues, validateBenchmarkVariance, validateFactoryCbd, type ValidationIssue } from "./validation";
 import { CBD_DIFF_FIELD_LABELS, getCbdDiff } from "./cbd-diff";
-import { bomChangedAlertBody, enqueueCostingChangeAlert, enqueueRoleChangeAlert } from "@/lib/notifications/workflow-alerts";
+import { bomChangedAlertBody, enqueueChangeAlert, enqueueRoleChangeAlert } from "@/lib/notifications/workflow-alerts";
+import { resolveChangeRequestsForCbd } from "./change-requests";
 import type { CostingStatus } from "@/lib/workflow/status";
 
 export type CbdLineInput = {
@@ -84,6 +85,49 @@ export function clarificationReturnStatusWithPrerequisites(
   if (action === "clarify" && !costingPassed) return "for_costing_review";
   return clarificationReturnStatus(action);
 }
+
+type NextReview = {
+  role: "md" | "costing" | "pbd";
+  title: string;
+  instruction: string;
+};
+
+/**
+ * The lane a factory submit hands off to. Single source for the handoff alert
+ * copy and for the change-alert decision (a PBD-returned correction does not
+ * re-open Costing's gate, so it gets no change alert).
+ */
+function nextReviewFor(status: CostingStatus): NextReview {
+  if (status === "for_pbd_review") {
+    return {
+      role: "pbd",
+      title: "Factory clarification resubmitted — PBD review required",
+      instruction: "The factory corrected and resubmitted the CBD requested by PBD. Review the revision and continue the approval decision."
+    };
+  }
+  if (status === "for_costing_review") {
+    return {
+      role: "costing",
+      title: "Factory clarification resubmitted — Costing review required",
+      instruction: "The factory corrected and resubmitted the CBD requested by Costing. Revalidate the revised costs."
+    };
+  }
+  return {
+    role: "md",
+    title: "Factory CBD submitted — MD technical review required",
+    instruction: "The factory submitted the CBD. Complete the MD technical review to release it to Costing validation."
+  };
+}
+
+/** What a resubmission changed, as recorded for notification copy. */
+type CbdChangeSummary = {
+  requestNumber: string | null;
+  changedCount: number;
+  fobBefore: number;
+  fobAfter: number;
+  currency: string;
+  changes: Array<{ field: string; oldValue: string; newValue: string }>;
+};
 
 export type SubmitCbdInput = {
   costingRequestId: string;
@@ -322,6 +366,14 @@ export async function submitFactoryCbd(input: SubmitCbdInput) {
     if (linesError) throw linesError;
   }
 
+  // Auto-resolve structured change requests whose requested value this
+  // revision now carries; anything still open is remaining work.
+  if (status === "submitted") {
+    await resolveChangeRequestsForCbd(supabase, input.costingRequestId, cbd.id).catch(() => {
+      // Best-effort — never block the submit on resolution bookkeeping.
+    });
+  }
+
   if (status === "submitted") {
     const benchmark = await getBenchmarkSummary({
       styleNumber: context.styleNumber,
@@ -434,31 +486,41 @@ export async function submitFactoryCbd(input: SubmitCbdInput) {
       }
     });
 
-    // Notify costing whenever a resubmission changes the BOM / material lines.
-    await enqueueBomChangeAlertIfChanged(
+    // The lane that owns the next step decides both the notification copy and
+    // whether a separate change alert is warranted.
+    const nextReview = nextReviewFor(nextStatus);
+
+    // Record the change once (the digest and audit trail read it) and describe
+    // it to the reviewer who has to act on the revised numbers.
+    const cbdChange = await recordCbdChangeAlert(
       input.costingRequestId,
       context.factoryName
-    ).catch(() => {
-      // Best-effort — never block the submit on notification failures.
-    });
+    ).catch(() => null);
 
-    const nextReview = nextStatus === "for_pbd_review"
-      ? {
-          role: "pbd",
-          title: "Factory clarification resubmitted — PBD review required",
-          instruction: "The factory corrected and resubmitted the CBD requested by PBD. Review the revision and continue the approval decision."
-        }
-      : nextStatus === "for_costing_review"
-        ? {
-            role: "costing",
-            title: "Factory clarification resubmitted — Costing review required",
-            instruction: "The factory corrected and resubmitted the CBD requested by Costing. Revalidate the revised costs."
-          }
-        : {
-            role: "md",
-            title: "Factory CBD submitted — MD technical review required",
-            instruction: "The factory submitted the CBD. Complete the MD technical review to release it to Costing validation."
-          };
+    // A correction PBD requested after Costing validated returns straight to
+    // PBD: Costing's gate never re-opens, so a "re-validate before approval"
+    // alert to Costing there is a false action item. PBD is told instead (the
+    // handoff alert below carries what changed).
+    const changeAlertOwner = cbdChange && nextReview.role !== "pbd" ? nextReview.role : null;
+    if (cbdChange && changeAlertOwner) {
+      const { subject, body } = bomChangedAlertBody({
+        ...cbdChange,
+        factoryName: context.factoryName,
+        ownerRole: changeAlertOwner
+      });
+      await enqueueChangeAlert({
+        recipientRole: changeAlertOwner,
+        requestId: input.costingRequestId,
+        requestNumber: cbdChange.requestNumber,
+        factoryName: context.factoryName,
+        subject,
+        body,
+        kind: "bom_changed",
+        changes: cbdChange.changes.map((change) => `${change.field}: ${change.oldValue} → ${change.newValue}`)
+      }).catch(() => {
+        // Best-effort — never block the submit on notification failures.
+      });
+    }
 
     // Notify the team that requested the correction (or MD for a first submit).
     await enqueueRoleChangeAlert({
@@ -468,6 +530,11 @@ export async function submitFactoryCbd(input: SubmitCbdInput) {
       bodyLines: [
         `Factory: ${context.factoryName ?? "Unassigned"}`,
         `Style: ${context.styleNumber ?? "Unknown"}`,
+        // The PBD-return lane sends no change alert, so its handoff carries the
+        // revision summary — PBD still sees exactly what the factory changed.
+        ...(cbdChange && !changeAlertOwner
+          ? [`Changed fields: ${cbdChange.changedCount}`, `FOB: ${cbdChange.currency} ${cbdChange.fobBefore.toFixed(2)} → ${cbdChange.currency} ${cbdChange.fobAfter.toFixed(2)}`]
+          : []),
         "",
         nextReview.instruction
       ]
@@ -518,15 +585,21 @@ async function getClarificationReturnStatus(
   }
 }
 
-async function enqueueBomChangeAlertIfChanged(requestId: string, factoryName: string | null) {
+/**
+ * Records a factory resubmission's CBD changes and returns what moved, or null
+ * when this submit changed nothing. The workflow event is written with the
+ * queue fan-out skipped: the submit path notifies the owner of the next step
+ * itself (change alert, or the PBD handoff), so the generic event fan-out would
+ * only add a second, owner-agnostic copy of the same news.
+ */
+async function recordCbdChangeAlert(requestId: string, factoryName: string | null): Promise<CbdChangeSummary | null> {
   const diff = await getCbdDiff(requestId);
-  if (!diff || diff.diffs.length === 0) return;
+  if (!diff || diff.diffs.length === 0) return null;
 
   const latestDiff = diff.diffs[diff.diffs.length - 1];
   const changedCount = latestDiff.filter((entry) => entry.changed).length;
-  if (changedCount === 0) return;
+  if (changedCount === 0) return null;
 
-  // Record the change as a workflow event so the daily digest can pick it up.
   const supabase = createSupabaseServiceClient();
   await recordWorkflowEvent(supabase, {
     costingRequestId: requestId,
@@ -535,40 +608,29 @@ async function enqueueBomChangeAlertIfChanged(requestId: string, factoryName: st
     payload: {
       changedCount,
       factoryName
-    }
+    },
+    notificationStatus: "skipped"
   }).catch(() => {
     // Best-effort — never block the submit on event-recording failures.
   });
 
   const impact = diff.costImpacts[diff.costImpacts.length - 1];
-  // Per-field old → new lines so the alert shows exactly what the factory
-  // changed, not just the count. Entries already carry formatted values.
-  const changes = latestDiff
-    .filter((entry) => entry.changed)
-    .map((entry) => ({
-      field: CBD_DIFF_FIELD_LABELS[entry.field] ?? entry.field,
-      oldValue: entry.oldValue || "—",
-      newValue: entry.newValue || "—"
-    }));
-  const { subject, body } = bomChangedAlertBody({
+  return {
     requestNumber: diff.requestNumber,
-    factoryName,
     changedCount,
     fobBefore: impact?.fobBefore ?? 0,
     fobAfter: impact?.fobAfter ?? 0,
     currency: impact?.currency ?? "USD",
-    changes
-  });
-
-  await enqueueCostingChangeAlert({
-    requestId,
-    requestNumber: diff.requestNumber,
-    factoryName,
-    subject,
-    body,
-    kind: "bom_changed",
-    changes: changes.map((change) => `${change.field}: ${change.oldValue} → ${change.newValue}`)
-  });
+    // Per-field old → new lines so the alert shows exactly what the factory
+    // changed, not just the count. Entries already carry formatted values.
+    changes: latestDiff
+      .filter((entry) => entry.changed)
+      .map((entry) => ({
+        field: CBD_DIFF_FIELD_LABELS[entry.field] ?? entry.field,
+        oldValue: entry.oldValue || "—",
+        newValue: entry.newValue || "—"
+      }))
+  };
 }
 
 function buildMaterialPayload(input: SubmitCbdInput, cbdId: string) {
