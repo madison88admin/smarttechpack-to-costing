@@ -124,7 +124,7 @@ export default async function AdminPage() {
               <li>CBD Submitted - notify PBD/Costing</li>
               <li>Needs Clarification - notify factory</li>
               <li>SLA Reminder - sent 1 day before SLA breach</li>
-              <li>Escalation - sent to manager after SLA breach + 4 days</li>
+              <li>Escalation - sent to the internal team after SLA breach + 4 days</li>
             </ul>
             <div className="form-actions">
               <EscalationTrigger />

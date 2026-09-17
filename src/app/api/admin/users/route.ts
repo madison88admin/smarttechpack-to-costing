@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { canManageUsers, getCurrentRole } from "@/lib/auth/roles";
+import { allRoles, canManageUsers, getCurrentRole, type UserRole } from "@/lib/auth/roles";
 import { setUserActive, upsertUserProfile } from "@/lib/auth/users";
 
-const roles = new Set(["superadmin", "admin", "manager", "pbd", "costing", "factory", "md", "viewer"]);
+const roles = new Set<string>(allRoles);
 
 export async function POST(request: Request) {
   if (!canManageUsers(getCurrentRole())) {
@@ -32,7 +32,7 @@ export async function POST(request: Request) {
       id: body.id ? String(body.id) : null,
       displayName: String(body.displayName),
       email: String(body.email),
-      role: role as "superadmin" | "admin" | "manager" | "pbd" | "costing" | "factory" | "md" | "viewer",
+      role: role as UserRole,
       isActive: body.isActive !== false,
       password: body.password ? String(body.password) : null
     });

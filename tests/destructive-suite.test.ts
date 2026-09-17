@@ -49,7 +49,7 @@ const ACTIONS = [
   "reject"
 ] as const;
 
-const ROLES: UserRole[] = ["superadmin", "admin", "manager", "pbd", "costing", "factory", "md", "viewer"];
+const ROLES: UserRole[] = ["superadmin", "admin", "pbd", "costing", "factory", "md", "viewer"];
 
 // Engine-level role gates (mirrors assertActionAllowed). send_to_factory /
 // submit / clarify carry NO engine gate — the route layer gates them
@@ -269,7 +269,6 @@ const EXPECTED_VISIBILITY: Record<UserRole, string[]> = {
   pbd: ALL_STATUSES, // owns the request end-to-end
   costing: ["for_md_review", "for_costing_review", "for_pbd_review", "needs_clarification", "approved", "rejected"],
   factory: ["draft", "sent_to_factory", "needs_clarification", "rejected"],
-  manager: ["for_pbd_review", "approved", "rejected"],
   md: ["for_md_review", "for_costing_review", "for_pbd_review", "needs_clarification"]
 };
 

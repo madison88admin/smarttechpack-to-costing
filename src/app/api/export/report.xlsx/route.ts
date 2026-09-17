@@ -7,7 +7,7 @@ import { injectNativeCharts, type NativeChartSheet } from "@/lib/export/inject-c
 
 export async function GET(request: Request) {
   const role = getCurrentRole();
-  const allowed = canRunPbdAction(role) || canRunCostingAction(role) || role === "manager";
+  const allowed = canRunPbdAction(role) || canRunCostingAction(role);
   if (!allowed) {
     return new Response("Unauthorized", { status: 401 });
   }

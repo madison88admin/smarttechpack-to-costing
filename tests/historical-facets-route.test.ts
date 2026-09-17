@@ -48,7 +48,7 @@ afterEach(() => {
 
 describe("GET /api/historical/distinct", () => {
   it("allows every internal role, including Super Admin", async () => {
-    for (const role of ["superadmin", "admin", "manager", "pbd", "costing", "md"] as UserRole[]) {
+    for (const role of ["superadmin", "admin", "pbd", "costing", "md"] as UserRole[]) {
       session.token = await issueSessionToken(role);
       mocks.client = createMockSupabase(responder()).client;
       const GET = await loadRoute();

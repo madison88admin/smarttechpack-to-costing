@@ -4,7 +4,7 @@ import { getCurrentRole, canRunCostingAction, canRunPbdAction } from "@/lib/auth
 
 export async function GET(_: Request, context: { params: { id: string } }) {
   const role = getCurrentRole();
-  if (!(canRunCostingAction(role) || canRunPbdAction(role) || role === "manager")) return new Response("Unauthorized", { status: 401 });
+  if (!(canRunCostingAction(role) || canRunPbdAction(role))) return new Response("Unauthorized", { status: 401 });
   const supabase = createSupabaseServiceClient();
   const { data: request, error } = await supabase.from("costing_requests").select("id,request_number,factory_name,nextgen_products(style_number,name),factory_cbds(raw_payload,submitted_at)").eq("id", context.params.id).maybeSingle();
   if (error || !request) return new Response("Request not found", { status: 404 });

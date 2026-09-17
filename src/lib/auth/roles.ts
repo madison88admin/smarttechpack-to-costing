@@ -1,12 +1,11 @@
 import { cookies } from "next/headers";
 import { readSessionPayload, SESSION_COOKIE } from "./session";
 
-export type UserRole = "superadmin" | "admin" | "manager" | "pbd" | "costing" | "factory" | "md" | "viewer";
+export type UserRole = "superadmin" | "admin" | "pbd" | "costing" | "factory" | "md" | "viewer";
 
 const roleLabels: Record<UserRole, string> = {
   superadmin: "Super Admin",
   admin: "Admin",
-  manager: "PBD",
   pbd: "PBD",
   costing: "Costing Team",
   factory: "Factory",
@@ -14,15 +13,17 @@ const roleLabels: Record<UserRole, string> = {
   viewer: "Viewer"
 };
 
-export const allRoles: UserRole[] = ["superadmin", "admin", "manager", "pbd", "costing", "factory", "md", "viewer"];
+export const allRoles: UserRole[] = ["superadmin", "admin", "pbd", "costing", "factory", "md", "viewer"];
 
 export function getCurrentRole(): UserRole {
   const role = getCurrentIdentity()?.role;
 
-  // Manager was merged into the PBD decision owner. Normalize any legacy
-  // session immediately while old database profiles are being migrated.
-  if (role === "manager") return "pbd";
-
+  // Manager no longer exists as a role (it was always the PBD decision owner, so
+  // the workflow never had a separate gate for it). A session signed before the
+  // retirement carries a role value that is no longer in the vocabulary and
+  // therefore falls through to "viewer" below: fail closed, never an
+  // escalation, and the user simply signs in again. No user_profiles row holds
+  // the retired role, and the login route refuses it outright.
   if (allRoles.includes(role as UserRole)) {
     return role as UserRole;
   }
@@ -83,12 +84,6 @@ export function canRunPbdAction(role: UserRole) {
   return isAdminTier(role) || role === "pbd";
 }
 
-// Legacy compatibility only. Manager identities are normalized to PBD by the
-// production-hardening migration; the workflow has no separate Manager gate.
-export function canRunManagerAction(role: UserRole) {
-  return canRunPbdAction(role) || role === "manager";
-}
-
 // MD (Merchandising) can check operations, knitting machine, and yarn based on sample's construction
 export function canRunMdAction(role: UserRole) {
   return isAdminTier(role) || role === "md";
@@ -126,6 +121,16 @@ export function canAccessInternalCostData(role: UserRole) {
 // the history exports and the historical facet dropdowns had drifted apart).
 export function canAccessHistoricalCostData(role: UserRole) {
   return canAccessInternalCostData(role) && role !== "viewer";
+}
+
+// Download endpoints that list requests or their CBD detail
+// (`/api/export/requests.csv`, `/api/export/cbd-detail.csv`) refuse the read-only
+// Viewer and scope every other role to the rows that role can already see. The
+// list page reads this same rule, so a link it shows can never disagree with the
+// endpoint behind it — previously the page offered Viewer two downloads that
+// both answered 401.
+export function canDownloadRequestExports(role: UserRole) {
+  return role !== "viewer";
 }
 
 // Super Admin only — system maintenance (sync, import, escalation triggers)

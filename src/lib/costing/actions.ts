@@ -456,51 +456,6 @@ async function assertChecklistComplete(
   }
 }
 
-async function checkApprovalThreshold(
-  supabase: ReturnType<typeof createSupabaseServiceClient>,
-  requestId: string
-): Promise<{ requiresManagerApproval: boolean; totalCost: number; threshold: number; currency: string }> {
-  // Get threshold from workflow_settings
-  const { data: settings } = await supabase
-    .from("workflow_settings")
-    .select("key, value")
-    .eq("key", "manager_approval_threshold")
-    .single();
-
-  const threshold = settings?.value ? parseFloat(String(settings.value)) : 0;
-
-  if (threshold <= 0) {
-    return { requiresManagerApproval: false, totalCost: 0, threshold: 0, currency: "USD" };
-  }
-
-  // Get the latest CBD total
-  const { data: cbd } = await supabase
-    .from("factory_cbds")
-    .select("raw_payload")
-    .eq("costing_request_id", requestId)
-    .order("submitted_at", { ascending: false, nullsFirst: false })
-    .order("id", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (!cbd?.raw_payload) {
-    return { requiresManagerApproval: false, totalCost: 0, threshold, currency: "USD" };
-  }
-
-  const payload = cbd.raw_payload as Record<string, unknown>;
-  const grandTotal = typeof payload.grandTotal === "number" ? payload.grandTotal : 0;
-  const landedCost = typeof payload.landedCost === "number" ? payload.landedCost : 0;
-  const totalCost = landedCost > 0 ? landedCost : grandTotal;
-  const currency = typeof payload.currency === "string" ? payload.currency : "USD";
-
-  return {
-    requiresManagerApproval: totalCost > threshold,
-    totalCost,
-    threshold,
-    currency
-  };
-}
-
 async function saveHistoricalCosting(
   supabase: ReturnType<typeof createSupabaseServiceClient>,
   requestId: string

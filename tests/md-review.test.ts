@@ -91,7 +91,7 @@ describe("MD role gate (canRunMdAction)", () => {
   });
 
   it("denies every other role", () => {
-    for (const role of ["pbd", "costing", "manager", "factory", "viewer"] as const) {
+    for (const role of ["pbd", "costing", "factory", "viewer"] as const) {
       expect(canRunMdAction(role), `role: ${role}`).toBe(false);
     }
   });

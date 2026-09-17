@@ -38,7 +38,7 @@ const STATUSES: CostingStatus[] = [
   "rejected"
 ];
 
-const ALL_ROLES = ["superadmin", "admin", "manager", "pbd", "costing", "factory", "md", "viewer"] as const;
+const ALL_ROLES = ["superadmin", "admin", "pbd", "costing", "factory", "md", "viewer"] as const;
 
 // Mirrors `validTransitions` in src/lib/costing/actions.ts — the source of truth.
 const ACTIONS: Record<string, CostingStatus[]> = {
@@ -74,7 +74,7 @@ describe("assertActionAllowed — role gates", () => {
       for (const role of ["costing", "admin", "superadmin"] as const) {
         expect(assertActionAllowed(action, role), `role: ${role}`).toBeNull();
       }
-      for (const role of ["pbd", "manager", "factory", "md", "viewer"] as const) {
+      for (const role of ["pbd", "factory", "md", "viewer"] as const) {
         expect(assertActionAllowed(action, role), `role: ${role}`).toBe(
           `Action "${action}" requires Costing Team or Admin role`
         );
@@ -86,7 +86,7 @@ describe("assertActionAllowed — role gates", () => {
     for (const role of ["pbd", "admin", "superadmin"] as const) {
       expect(assertActionAllowed(action, role), `role: ${role}`).toBeNull();
     }
-    for (const role of ["costing", "manager", "factory", "md", "viewer"] as const) {
+    for (const role of ["costing", "factory", "md", "viewer"] as const) {
       expect(assertActionAllowed(action, role), `role: ${role}`).toBe(
         `Action "${action}" requires PBD or Admin role`
       );

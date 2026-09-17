@@ -954,14 +954,6 @@ h3 {
   margin-top: 4px;
 }
 
-.manager-approval-banner {
-  background: #fef3c7;
-  border: 1px solid #fcd34d;
-  border-radius: 8px;
-  padding: 8px 12px;
-  margin: 8px 0;
-}
-
 /* Anomaly alerts */
 .anomaly-ok {
   padding: 12px;

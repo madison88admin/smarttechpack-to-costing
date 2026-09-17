@@ -59,7 +59,6 @@ function approveResponder(overrides: Partial<Responder> = {}): Responder {
       maybeSingle: () => ({ data: { metadata: { decision: "pass" } }, error: null }),
       insert: () => ({ data: [], error: null })
     },
-    workflow_settings: { single: () => ({ data: { key: "manager_approval_threshold", value: "15" }, error: null }) },
     factory_cbds: {
       maybeSingle: () => ({ data: { id: "cbd-1", raw_payload: cbdPayload }, error: null })
     },

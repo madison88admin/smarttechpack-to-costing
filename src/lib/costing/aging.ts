@@ -133,9 +133,8 @@ export function getAgingSummary(rows: AgingRow[]): AgingSummary {
  * by the caller using the authenticated assignment.
  */
 export function scopeSlaRowsForRole(rows: AgingRow[], role: string, factoryProfileId?: string | null) {
-  const owner = role === "manager" ? "pbd" : role;
   return rows.filter((row) =>
-    row.owner_role === owner
+    row.owner_role === role
     && (role !== "factory" || Boolean(factoryProfileId && row.assigned_factory_user_id === factoryProfileId))
   );
 }

@@ -130,7 +130,7 @@ async function enqueueEscalationNotification(
     `SLA threshold: ${formatSlaDuration(slaHours)}`,
     ``,
     isEscalation
-      ? `This request has exceeded the SLA by ${formatSlaDuration(overdueHours)}. Manager action required.`
+      ? `This request has exceeded the SLA by ${formatSlaDuration(overdueHours)}. MD action required.`
       : `This request is approaching its SLA threshold. Please review and take action.`,
     ``,
     `View request: ${process.env.NEXT_PUBLIC_APP_URL ?? ""}/requests/${request.id}`

@@ -335,14 +335,6 @@ export function getStatusesForRoles(roles: string[]): string[] {
     statuses.add("rejected");
   }
 
-  // Manager is a legacy alias for the PBD approver: the dedicated approval
-  // queue and read-only visibility after decision.
-  if (roles.includes("manager")) {
-    statuses.add("for_pbd_review");
-    statuses.add("approved");
-    statuses.add("rejected");
-  }
-
   // MD reviews run right after factory CBD submission, before costing validation.
   if (roles.includes("md")) {
     statuses.add("for_md_review");

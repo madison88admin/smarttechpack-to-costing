@@ -175,7 +175,7 @@ export default async function Home({
             <small>Awaiting Costing Team validation</small>
           </Link>
         ) : null}
-        {role !== "superadmin" && (["admin", "pbd", "manager"].includes(role)) ? (
+        {role !== "superadmin" && (["admin", "pbd"].includes(role)) ? (
           <Link href="/requests?status=for_pbd_review" className="metric metric-clickable">
             <span className="metric-label">For PBD Review</span>
             <strong>{forReview}</strong>
@@ -342,7 +342,6 @@ function getActionStatuses(role: string) {
   if (role === "factory") return ["draft", "sent_to_factory", "needs_clarification"];
   if (role === "costing") return ["for_costing_review"];
   if (role === "md") return ["for_md_review"];
-  if (role === "manager") return ["for_pbd_review"];
   if (role === "pbd") return ["for_pbd_review", "needs_clarification"];
   return ["for_costing_review", "for_pbd_review", "needs_clarification"];
 }
@@ -350,7 +349,6 @@ function getActionStatuses(role: string) {
 function getQueueLabel(role: string) {
   if (role === "factory") return "Factory queue";
   if (role === "costing") return "Costing validation";
-  if (role === "manager") return "PBD review";
   if (role === "md") return "MD review";
   if (role === "pbd") return "PBD review";
   return "All operational queues";
@@ -361,6 +359,5 @@ function getNextStepHint(role: string, counts: { forCosting: number; forReview: 
   if (role === "costing") return counts.forCosting ? `${counts.forCosting} awaiting validation — open Costing Review.` : counts.clarification ? `${counts.clarification} returned to factory — monitor clarifications.` : "No Costing actions.";
   if (role === "md") return "Check MD review queue — pass to release to Costing.";
   if (role === "pbd") return counts.forReview ? `${counts.forReview} awaiting PBD approval — enter pricing then approve.` : counts.clarification ? `${counts.clarification} with factory — awaiting resubmit.` : "No PBD actions.";
-  if (role === "manager") return counts.forReview ? `${counts.forReview} awaiting PBD approval.` : "No PBD actions.";
   return counts.clarification ? `${counts.clarification} needs clarification — factory is correcting.` : "All queues monitored.";
 }

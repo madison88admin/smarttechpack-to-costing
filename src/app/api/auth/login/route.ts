@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import type { UserRole } from "@/lib/auth/roles";
+import { allRoles, type UserRole } from "@/lib/auth/roles";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { pgrestValue } from "@/lib/supabase/filters";
 import { verifyPassword } from "@/lib/auth/passwords";
@@ -7,7 +7,10 @@ import { createSupabaseAuthClient, isSupabaseAuthEnabled } from "@/lib/auth/supa
 import { getClientIp, isRateLimited, RATE_LIMITS, recordRateLimitHit, resetRateLimit } from "@/lib/auth/rate-limit";
 import { createSessionToken, SESSION_COOKIE, SESSION_TTL_SECONDS } from "@/lib/auth/session";
 
-const validRoles = new Set<UserRole>(["superadmin", "admin", "manager", "pbd", "costing", "factory", "md", "viewer"]);
+// The login boundary reads the canonical role vocabulary instead of a hand-copied
+// list: the previous copy here still accepted the retired `manager` role long after
+// the rest of the app stopped offering it.
+const validRoles = new Set<UserRole>(allRoles);
 
 function findPilotUser(username: string, password: string) {
   if (process.env.TP_COSTING_ENABLE_PILOT_LOGIN !== "true") return null;

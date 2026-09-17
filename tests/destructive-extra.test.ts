@@ -41,7 +41,6 @@ function baseResponder(status: string, overrides: Partial<Responder> = {}): Resp
     },
     historical_costings: { maybeSingle: () => ({ data: null, error: null }), select: () => ({ data: [], error: null }), delete: () => ({ data: [], error: null }), insert: () => ({ data: [], error: null }) },
     workflow_events: { insert: () => ({ data: [], error: null }) },
-    workflow_settings: { single: () => ({ data: { key: "manager_approval_threshold", value: "15" }, error: null }) },
     validation_checklist_items: { select: () => ({ data: [], error: null }) },
     request_checklist_results: { select: () => ({ data: [{ checklist_code: "moq_checked", is_checked: true }, { checklist_code: "lead_time_checked", is_checked: true }, { checklist_code: "packaging_checked", is_checked: true }, { checklist_code: "comparable_style_reviewed", is_checked: true }], error: null }) },
     ...overrides,

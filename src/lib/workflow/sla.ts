@@ -9,7 +9,6 @@ import type { WorkflowSettings } from "@/lib/admin/settings";
  *   - MD: 24 hrs for the technical check
  *   - Costing: 24 hrs to validate after FTY CBD receipt
  *   - PBD: 24 hrs to add selling price after costing validation
- *   - Manager: falls back to the day-based approval SLA
  */
 
 /** Maps a status to its SLA setting suffix ("factorySubmission" → factorySubmissionSlaHours). */

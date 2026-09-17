@@ -8,6 +8,8 @@ describe("SLA role scope", () => {
     const rows = [row("factory"), row("md"), row("costing"), row("pbd")];
     expect(scopeSlaRowsForRole(rows, "costing").map(item => item.owner_role)).toEqual(["costing"]);
     expect(scopeSlaRowsForRole(rows, "pbd").map(item => item.owner_role)).toEqual(["pbd"]);
-    expect(scopeSlaRowsForRole(rows, "manager").map(item => item.owner_role)).toEqual(["pbd"]);
+    // A role outside the vocabulary (e.g. a session signed before the Manager
+    // retirement) owns nothing — fail closed rather than borrowing PBD's queue.
+    expect(scopeSlaRowsForRole(rows, "manager").map(item => item.owner_role)).toEqual([]);
   });
 });
