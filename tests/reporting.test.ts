@@ -125,6 +125,54 @@ describe("getReportData", () => {
     expect(feb).toMatchObject({ created: 2, approved: 1, avgCost: 25 });
   });
 
+  it("leaves unattributed history out of the cost-driver charts", async () => {
+    const { client } = createMockSupabase(
+      reportResponder({
+        historical_costings: {
+          select: () => ({
+            data: [
+              {
+                costing_request_id: "req-1",
+                total_cost: 10,
+                approved_at: "2026-01-20T10:00:00Z",
+                yarn_type: "100%Acrylic",
+                knit_type: null,
+                machine_type: null,
+                construction: "Hats",
+                factory_name: null,
+                customer: "Prana"
+              },
+              {
+                costing_request_id: "req-2",
+                total_cost: 30,
+                approved_at: "2026-02-05T10:00:00Z",
+                yarn_type: null,
+                knit_type: null,
+                machine_type: null,
+                construction: null,
+                factory_name: null,
+                customer: null
+              }
+            ],
+            error: null
+          })
+        }
+      })
+    );
+    mocks.client = client;
+
+    const report = await getReportData();
+
+    // A blank field is missing data, not a category — charting it as
+    // "Unassigned factory"/"No machine" made unresolved imports the biggest bar.
+    expect(report.byFactoryCost).toEqual([]);
+    expect(report.byMachine).toEqual([]);
+    expect(report.byKnit).toEqual([]);
+    expect(report.byCustomerCost).toEqual([{ key: "Prana", count: 1, avgCost: 10 }]);
+    expect(report.byYarn).toEqual([{ key: "100%Acrylic", count: 1, avgCost: 10 }]);
+    expect(report.byConstruction).toEqual([{ key: "Hats", count: 1, avgCost: 10 }]);
+  });
+
   it("includes the flattened request register rows", async () => {
     const { client } = createMockSupabase(reportResponder());
     mocks.client = client;
