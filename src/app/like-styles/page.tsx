@@ -1,17 +1,15 @@
 import { AppShell } from "@/components/app-shell";
 import { LikeStylesSearch } from "@/components/like-styles-search";
-import { getCurrentRole, type UserRole } from "@/lib/auth/roles";
+import { canAccessHistoricalCostData, getCurrentRole } from "@/lib/auth/roles";
 import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
-// Tyler's ask: a searchable library of comparative historical styles for
-// MD, Costing, and PBD. Factory is intentionally excluded from this tool.
-const ALLOWED_ROLES: UserRole[] = ["admin", "manager", "pbd", "costing", "md"];
-
+// A searchable library of comparative historical styles for MD, Costing, and
+// PBD. Factory is intentionally excluded from this tool.
 export default function LikeStylesPage() {
   const role = getCurrentRole();
-  if (!ALLOWED_ROLES.includes(role)) {
+  if (!canAccessHistoricalCostData(role)) {
     redirect("/");
   }
 

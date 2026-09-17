@@ -7,9 +7,9 @@ import { ChangeAlertsPanel } from "@/components/change-alerts-panel";
 import { MarginAnalyticsPanel } from "@/components/margin-analytics-panel";
 import { FactoryScorecardPanel } from "@/components/factory-scorecard-panel";
 import { SavingsOpportunityPanel } from "@/components/savings-opportunity-panel";
-import { canCreateRequest, canRunPbdAction, canRunCostingAction, getCurrentRole, getCurrentUserId, getRoleLabel } from "@/lib/auth/roles";
+import { canCreateRequest, canRunPbdAction, canRunCostingAction, getCurrentRole, getCurrentUserId } from "@/lib/auth/roles";
 import { resolveFactoryScope, scopeRowsForRole } from "@/lib/costing/request-listing";
-import { getAgingSummary, tryGetAgingData } from "@/lib/costing/aging";
+import { getAgingSummary, scopeSlaRowsForRole, tryGetAgingData } from "@/lib/costing/aging";
 import { getMarginAnalytics } from "@/lib/costing/margin-analytics";
 import { getFactoryScorecard } from "@/lib/costing/factory-scorecard";
 import { getSavingsOpportunity } from "@/lib/costing/savings-opportunity";
@@ -84,14 +84,11 @@ export default async function Home({
           getFactoryScorecard(),
           getSavingsOpportunity()
         ]);
-  // Factory users only see SLA data for their own assigned requests.
-  const factoryAgingRows = role === "factory" && factoryProfileId
-    ? aging.rows.filter((r) => {
-        const matched = metricsRows.find((row) => row.id === r.id);
-        return Boolean(matched && matched.assigned_factory_user_id === factoryProfileId);
-      })
-    : aging.rows;
-  const agingSummary = getAgingSummary(factoryAgingRows);
+  // SLA is an accountability view, not a company-wide leaderboard. Each
+  // operational role sees only items currently waiting for that role. Factory
+  // users are additionally restricted to requests assigned to their profile.
+  const scopedAgingRows = scopeSlaRowsForRole(aging.rows, role, factoryProfileId);
+  const agingSummary = getAgingSummary(scopedAgingRows);
   const actionStatuses = getActionStatuses(role);
   const actionRows = metricsRows.filter((row: any) => actionStatuses.includes(row.status)).slice(0, 5);
   const queueLabel = getQueueLabel(role);
@@ -117,7 +114,8 @@ export default async function Home({
             </div>
             <span className="status red">{agingSummary.overdue} breached</span>
           </div>
-          <SlaBreachTable rows={factoryAgingRows.filter((r) => r.is_overdue)} statusLabels={Object.fromEntries(factoryAgingRows.map((r) => [r.status, maskStatusForRole(r.status, role)]))} role={role} />
+          <p className="eyebrow">This list contains only requests whose next action belongs to your role.</p>
+          <SlaBreachTable rows={scopedAgingRows.filter((r) => r.is_overdue)} statusLabels={Object.fromEntries(scopedAgingRows.map((r) => [r.status, maskStatusForRole(r.status, role)]))} role={role} />
         </section>
       )
     });
@@ -169,47 +167,15 @@ export default async function Home({
   return (
     <AppShell>
       <div className="dashboard-page">
-      <div className="hero dashboard-hero">
-        <div>
-          <p className="eyebrow">Costing Workspace · {getRoleLabel(role)}</p>
-          <h1>Costing Dashboard</h1>
-          <p className="hero-copy">
-            {role === "factory" ? "Submit your cost breakdown, respond to clarifications, and track factory queue — no pricing is shown here." : role === "costing" ? "Validate factory CBDs, check the 4-item checklist, and release to PBD — outlier flags need your ack to unblock approval." : role === "md" ? "Review construction, yarn and machine against the BOM — pass to release to Costing." : role === "pbd" ? "Review validated costs, enter selling price, and approve — customer status follows approval." : "Track tech-pack costing from NextGen pull to customer close."}
-          </p>
-          <div className="dashboard-hero-next">
-            <strong>Your next step:</strong> {getNextStepHint(role, { forCosting, forReview, clarification, factoryQueue: metricsRows.filter((r) => ["draft","sent_to_factory","needs_clarification"].includes(r.status)).length })}
-          </div>
-        </div>
-        <div className="hero-actions">
-          {role !== "factory" ? <Link className="button secondary" href="/qa">
-            Pilot QA
-          </Link> : null}
-          {canCreate ? (
-            <Link className="button" href="/requests/new">
-              New Request
-            </Link>
-          ) : null}
-          {role === "factory" ? <Link className="button" href="/factory">Go to Factory View →</Link> : null}
-        </div>
-      </div>
-
-      <div className="dashboard-utility-row" aria-label="Dashboard shortcuts">
-        <span className="dashboard-utility-caption">Workspace view</span>
-        <Link className="dashboard-chip" href="/requests">All requests</Link>
-        <Link className="dashboard-chip" href="/requests?status=overdue">Overdue</Link>
-        <Link className="dashboard-chip" href="/requests?status=needs_clarification">Needs clarification</Link>
-        {role !== "factory" ? <Link className="dashboard-chip dashboard-chip-accent" href="/reports">Open reporting</Link> : null}
-      </div>
-
       <div className="grid metrics">
-        {canRunCostingAction(role) ? (
+        {role !== "superadmin" && canRunCostingAction(role) ? (
           <Link href="/requests?status=for_costing_review" className="metric metric-clickable">
             <span className="metric-label">For Costing Review</span>
             <strong>{forCosting}</strong>
             <small>Awaiting Costing Team validation</small>
           </Link>
         ) : null}
-        {(["admin", "pbd", "manager"].includes(role)) ? (
+        {role !== "superadmin" && (["admin", "pbd", "manager"].includes(role)) ? (
           <Link href="/requests?status=for_pbd_review" className="metric metric-clickable">
             <span className="metric-label">For PBD Review</span>
             <strong>{forReview}</strong>
@@ -223,11 +189,11 @@ export default async function Home({
             <small>Open factory queue</small>
           </Link>
         ) : null}
-        <Link href="/requests?status=needs_clarification" className="metric metric-clickable">
+        {role !== "superadmin" ? <Link href="/requests?status=needs_clarification" className="metric metric-clickable">
           <span className="metric-label">Needs Clarification</span>
           <strong>{clarification}</strong>
           <small>Returned to factory</small>
-        </Link>
+        </Link> : null}
         {role !== "factory" ? <Link href="/requests?status=approved" className="metric metric-clickable">
           <span className="metric-label">Internally Approved</span>
           <strong>{approved}</strong>
@@ -240,11 +206,11 @@ export default async function Home({
         </div>
       </div>
 
-      <section className="panel action-queue-panel">
+      {role === "superadmin" ? <section className="panel"><div className="empty-state compact-empty"><strong>Administration workspace</strong><p>Operational queues are hidden for Super Admin. Use All Requests, Reporting, Audit Logs, and User Management to monitor the system.</p></div></section> : <section className="panel action-queue-panel">
         <div className="section-heading">
           <div>
             <p className="eyebrow">Role-based queue</p>
-            <h2>My actions today</h2>
+            <h2>My action queue</h2>
           </div>
           <span className="status blue">{queueLabel}</span>
         </div>
@@ -262,13 +228,14 @@ export default async function Home({
             })}
           </div>
         ) : <div className="empty-state compact-empty"><strong>No action items right now</strong><p>Your role queue is clear.</p></div>}
-      </section>
+      </section>}
 
       {/* BOM and PBD pricing alerts are internal Madison88 review data.
           Factory users receive their clarification action through the
           assigned queue/request banner instead of this internal feed. */}
       {role !== "factory" ? <ChangeAlertsPanel /> : null}
 
+      {role !== "superadmin" ? <>
       {agingSummary && agingSummary.total > 0 ? (
         <div className="grid metrics" style={{ marginTop: 12 }}>
           <div className="metric">
@@ -304,10 +271,10 @@ export default async function Home({
 
       <section className="process-strip">
         <div className="process-step done">
-          <strong>1. Pull NextGen</strong>
+          <strong>1. Pull from NextGen</strong>
           <span>Style, product, BOM</span>
         </div>
-        <div className="process-step current">
+        <div className="process-step">
           <strong>2. Factory CBD</strong>
           <span>Cost, MOQ, lead time</span>
         </div>
@@ -316,16 +283,20 @@ export default async function Home({
           <span>Madison88 internal review</span>
         </div> : <>
           <div className="process-step">
-            <strong>3. Costing Review</strong>
-            <span>Validation + checklist</span>
+            <strong>3. MD Technical Review</strong>
+            <span>Construction and product check</span>
           </div>
           <div className="process-step">
-            <strong>4. PBD Approval</strong>
-            <span>Review, approve, reject, or clarify</span>
+            <strong>4. Costing Validation</strong>
+            <span>Warnings and checklist</span>
           </div>
           <div className="process-step">
-            <strong>5. Customer Status</strong>
-            <span>Submit, negotiate, close</span>
+            <strong>5. PBD Approval</strong>
+            <span>Approve, reject, or request clarification</span>
+          </div>
+          <div className="process-step">
+            <strong>6. Customer Review</strong>
+            <span>Submit, negotiate, and close</span>
           </div>
         </>}
       </section>
@@ -357,6 +328,7 @@ export default async function Home({
           <Link href="/requests">All Requests</Link> page, so this dashboard stays focused on your queue and analytics.
         </p>
       </section>
+      </> : null}
       </div>
     </AppShell>
   );
@@ -392,5 +364,3 @@ function getNextStepHint(role: string, counts: { forCosting: number; forReview: 
   if (role === "manager") return counts.forReview ? `${counts.forReview} awaiting PBD approval.` : "No PBD actions.";
   return counts.clarification ? `${counts.clarification} needs clarification — factory is correcting.` : "All queues monitored.";
 }
-
-

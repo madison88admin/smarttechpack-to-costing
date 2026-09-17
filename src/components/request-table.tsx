@@ -5,6 +5,7 @@ import { StatusPill } from "./status-pill";
 import { SelectAllCheckbox } from "./select-all-checkbox";
 import { IconArrowRight } from "@/components/ui/icons";
 import { Avatar } from "./ui/avatar";
+import { formatCustomerStatusLabel } from "@/lib/costing/customer-status";
 
 type SortField = "request_number" | "factory_name" | "status" | "created_at";
 type SortDir = "asc" | "desc";
@@ -135,7 +136,7 @@ export function RequestTable({
                 const rowStatus = request.status;
                 const isOverdue = overdueIds.has(request.id);
                 const ageClass = isOverdue ? "red" : request.ageDays >= 3 && rowStatus !== "approved" ? "amber" : "neutral";
-                const customerStatus = isLive ? formatCustomerStatus(rows.find((row) => row.id === request.id)?.customer_status) : "Pending";
+                const customerStatus = isLive ? formatCustomerStatusLabel(rows.find((row) => row.id === request.id)?.customer_status) : "Pending";
 
                 return (
                   <tr key={request.id} className={`row-${rowStatus}`}>
@@ -217,23 +218,4 @@ function quickActionHref(request: CostingRequestSummary, role: string) {
   return role === "factory" && factoryQueue
     ? `/factory/${request.id}`
     : `/requests/${request.id}`;
-}
-
-function formatCustomerStatus(status?: string | null) {
-  if (!status || status === "not_submitted") return "Not submitted";
-
-  const labels: Record<string, string> = {
-    pending_customer_submission: "Ready for customer",
-    sent_to_customer: "Sent to customer",
-    under_negotiation: "Under negotiation",
-    customer_approved: "Customer approved",
-    customer_rejected_revised: "Revision required",
-    closed: "Closed"
-  };
-  if (labels[status]) return labels[status];
-
-  return status
-    .split("_")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
 }

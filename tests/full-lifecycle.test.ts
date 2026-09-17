@@ -327,7 +327,8 @@ describe("FULL LIFECYCLE — create → factory → MD → costing → PBD appro
                 }
               : { data: { id: "cbd-1", raw_payload: { grandTotal: 10, currency: "USD" } }, error: null }
         },
-        historical_costings: {
+    historical_costings: {
+      maybeSingle: () => ({ data: null, error: null }),
           select: () => ({ data: [], error: null }), // no history → not an outlier
           delete: () => ({ data: [], error: null }),
           insert: () => ({ data: [], error: null })

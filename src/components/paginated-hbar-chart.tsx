@@ -30,9 +30,9 @@ export function PaginatedHBarChart({
       />
       {pageCount > 1 ? (
         <div className="pagination-controls" aria-label={`${mainLabel} pagination`}>
-          <button className="button secondary btn-sm" type="button" onClick={() => setPage((value) => Math.max(0, value - 1))} disabled={currentPage === 0}>Previous</button>
-          <span className="eyebrow">{currentPage * pageSize + 1}–{Math.min((currentPage + 1) * pageSize, items.length)} of {items.length}</span>
-          <button className="button secondary btn-sm" type="button" onClick={() => setPage((value) => Math.min(pageCount - 1, value + 1))} disabled={currentPage === pageCount - 1}>Next 5</button>
+          <button className="button secondary btn-sm" type="button" onClick={() => setPage((value) => Math.max(0, value - 1))} disabled={currentPage === 0} aria-label="Show previous results page">Previous</button>
+          <span className="eyebrow">Page {currentPage + 1} of {pageCount} · showing {currentPage * pageSize + 1}–{Math.min((currentPage + 1) * pageSize, items.length)} of {items.length}</span>
+          <button className="button secondary btn-sm" type="button" onClick={() => setPage((value) => Math.min(pageCount - 1, value + 1))} disabled={currentPage === pageCount - 1} aria-label="Show next results page">Next</button>
         </div>
       ) : null}
     </>

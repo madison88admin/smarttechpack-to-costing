@@ -13,7 +13,10 @@ const { mocks } = vi.hoisted(() => ({
   }
 }));
 
-vi.mock("@/lib/auth/roles", () => ({
+// Only the session lookup is mocked: the role rule under test is the real one
+// from lib/auth/roles, so this still exercises the shipped boundary.
+vi.mock("@/lib/auth/roles", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/auth/roles")>()),
   getCurrentRole: () => mocks.role
 }));
 
@@ -60,7 +63,7 @@ function csvUrl() {
 }
 
 describe("like-styles export routes", () => {
-  it("rejects roles outside MD/Costing/PBD/Manager/Admin", async () => {
+  it("rejects Factory and Viewer", async () => {
     mocks.role = "factory";
     const res = await csvGet(csvUrl());
     expect(res.status).toBe(401);

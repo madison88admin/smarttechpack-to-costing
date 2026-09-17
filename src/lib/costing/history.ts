@@ -8,6 +8,10 @@ export type HistoricalCostingRow = {
   style_number: string | null;
   factory_name: string | null;
   total_cost: number | null;
+  /** Landed cost per unit (FOB total when no freight/duty were entered). */
+  landed_cost?: number | null;
+  /** Real selling price (PBD-entered, else NextGen-ported) — null when unknown. */
+  selling_price?: number | null;
   currency: string | null;
   approved_at: string | null;
   searchable_text?: string | null;
@@ -27,37 +31,74 @@ export type HistoricalCostingRow = {
   benchmark_exclusion_reason?: string | null;
 };
 
-export const HISTORICAL_COSTING_COLUMNS = `
-      id,
-      costing_request_id,
-      style_number,
-      factory_name,
-      total_cost,
-      currency,
-      approved_at,
-      searchable_text,
-      yarn_type,
-      knit_type,
-      machine_type,
-      construction,
-      product_category,
-      average_consumption,
-      knitting_time,
-      brand,
-      customer,
-      season,
-      benchmark_excluded,
-      benchmark_exclusion_reason
-    ` as const;
+/** Columns every historical-costing read shares — one owner for the list. */
+const HISTORICAL_COSTING_COLUMNS = [
+  "id",
+  "costing_request_id",
+  "style_number",
+  "factory_name",
+  "total_cost",
+  "currency",
+  "approved_at",
+  "searchable_text",
+  "yarn_type",
+  "knit_type",
+  "machine_type",
+  "construction",
+  "product_category",
+  "average_consumption",
+  "knitting_time",
+  "source",
+  "brand",
+  "customer",
+  "season",
+  "benchmark_excluded",
+  "benchmark_exclusion_reason"
+] as const;
+
+/**
+ * The columns the history screens build their filter dropdowns from. Each one
+ * must be a column the shared select list already reads, so renaming a column
+ * here is a compile error rather than a silently empty dropdown.
+ */
+export const HISTORICAL_FACET_COLUMNS = [
+  "yarn_type",
+  "knit_type",
+  "machine_type",
+  "construction",
+  "product_category",
+  "factory_name",
+  "brand",
+  "customer",
+  "season"
+] as const satisfies readonly (typeof HISTORICAL_COSTING_COLUMNS)[number][];
+
+/**
+ * Cost/margin columns added by migration 018. Selected separately so a database
+ * that has not had the migration applied yet still serves the historical pool
+ * (without machine cost/margin) instead of failing the read outright.
+ */
+const HISTORICAL_COST_COLUMNS = ["landed_cost", "selling_price"] as const;
+
+/** The shared select list, with the migration-018 cost columns when asked for. */
+function historicalCostingSelect({ withCost = true }: { withCost?: boolean } = {}) {
+  return [...HISTORICAL_COSTING_COLUMNS, ...(withCost ? HISTORICAL_COST_COLUMNS : [])].join(", ");
+}
+
+/** True when PostgREST rejected a read because the cost columns are not there yet. */
+function missingCostColumns(error: { message?: string } | null | undefined) {
+  const message = error?.message ?? "";
+  return /does not exist/.test(message) && HISTORICAL_COST_COLUMNS.some((column) => message.includes(column));
+}
 
 /** Fetch one approved historical costing row by id (like-style baseline). */
 export async function getHistoricalCostingById(id: string): Promise<HistoricalCostingRow | null> {
   const supabase = createSupabaseServiceClient();
-  const { data, error } = await supabase
-    .from("historical_costings")
-    .select(HISTORICAL_COSTING_COLUMNS)
-    .eq("id", id)
-    .maybeSingle();
+  const read = (columns: string) =>
+    supabase.from("historical_costings").select(columns).eq("id", id).maybeSingle();
+
+  let { data, error } = await read(historicalCostingSelect());
+  if (missingCostColumns(error)) ({ data, error } = await read(historicalCostingSelect({ withCost: false })));
 
   if (error) throw error;
   return (data as HistoricalCostingRow | null) ?? null;
@@ -168,45 +209,102 @@ export async function listHistoricalCostings(input?: string | {
   const filters = typeof input === "string" ? { query: input } : input ?? {};
   const supabase = createSupabaseServiceClient();
   const maxRows = Math.min(Math.max(filters.maxRows ?? 500, 1), 5000);
-  let request = supabase
-    .from("historical_costings")
-    .select(
-      `
-      id,
-      costing_request_id,
-      style_number,
-      factory_name,
-      total_cost,
-      currency,
-      approved_at,
-      searchable_text,
-      yarn_type,
-      knit_type,
-      machine_type,
-      construction,
-      product_category,
-      average_consumption,
-      knitting_time,
-      source,
-      brand,
-      customer,
-      season,
-      benchmark_excluded,
-      benchmark_exclusion_reason
-    `
-    )
-    .order("approved_at", { ascending: false })
-    .limit(maxRows);
+  const rows: HistoricalCostingRow[] = [];
+  // PostgREST returns at most 1000 rows per request, so 1000 is the largest
+  // page that still fits in one round trip — half the round trips the old
+  // 500-row pages needed for the same read.
+  const pageSize = 1000;
+  const readPage = (columns: string, offset: number) => {
+    let request = supabase
+      .from("historical_costings")
+      .select(columns)
+      .order("approved_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(offset, Math.min(offset + pageSize, maxRows) - 1);
 
-  if (filters.query?.trim()) request = request.ilike("searchable_text", pgrestLike(filters.query.trim()));
-  if (filters.factory?.trim()) request = request.ilike("factory_name", pgrestLike(filters.factory.trim()));
-  if (filters.brand?.trim()) request = request.ilike("brand", pgrestLike(filters.brand.trim()));
-  if (filters.customer?.trim()) request = request.ilike("customer", pgrestLike(filters.customer.trim()));
-  if (filters.season?.trim()) request = request.ilike("season", pgrestLike(filters.season.trim()));
+    if (filters.query?.trim()) request = request.ilike("searchable_text", pgrestLike(filters.query.trim()));
+    if (filters.factory?.trim()) request = request.ilike("factory_name", pgrestLike(filters.factory.trim()));
+    if (filters.brand?.trim()) request = request.ilike("brand", pgrestLike(filters.brand.trim()));
+    if (filters.customer?.trim()) request = request.ilike("customer", pgrestLike(filters.customer.trim()));
+    if (filters.season?.trim()) request = request.ilike("season", pgrestLike(filters.season.trim()));
+    return request;
+  };
 
-  const { data, error } = await request;
+  for (let offset = 0; offset < maxRows; offset += pageSize) {
+  const columns = historicalCostingSelect();
+  let { data, error } = await readPage(columns, offset);
+  // Migration 018 not applied yet: the pool still loads, minus machine cost.
+  if (missingCostColumns(error)) ({ data, error } = await readPage(historicalCostingSelect({ withCost: false }), offset));
   if (error) throw error;
-  return ((data ?? []) as HistoricalCostingRow[]).filter((row) => !row.benchmark_excluded);
+  rows.push(...((data ?? []) as unknown as HistoricalCostingRow[]));
+  if (!data || data.length < Math.min(pageSize, maxRows - offset)) break;
+  }
+  return rows.filter((row) => !row.benchmark_excluded);
+}
+
+export type HistoricalFacetOptions = {
+  yarnTypes: string[];
+  knitTypes: string[];
+  machineTypes: string[];
+  constructions: string[];
+  categories: string[];
+  factories: string[];
+  brands: string[];
+  customers: string[];
+  seasons: string[];
+};
+
+/** PostgREST returns at most 1000 rows per request (db-max-rows). */
+const FACET_PAGE_SIZE = 1000;
+const FACET_MAX_ROWS = 20_000;
+/** How many values each dropdown keeps after sorting. */
+const FACET_MAX_VALUES = 120;
+
+/**
+ * Distinct values for the historical search dropdowns.
+ *
+ * One paginated read of every facet column at once replaces the previous nine
+ * single-column reads: those pulled ~9x the rows over the wire (a ~70s cold
+ * scan) and, because each asked for `limit(5000)` against the 1000-row server
+ * cap, only ever saw the first 1000 of ~2,800 rows — so values appearing later
+ * in the pool never reached the dropdowns.
+ */
+export async function listHistoricalFacetValues(): Promise<HistoricalFacetOptions> {
+  const supabase = createSupabaseServiceClient();
+  const sets = new Map<string, Set<string>>(HISTORICAL_FACET_COLUMNS.map((col) => [col, new Set<string>()]));
+  const columns = HISTORICAL_FACET_COLUMNS.join(", ");
+
+  for (let offset = 0; offset < FACET_MAX_ROWS; offset += FACET_PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("historical_costings")
+      .select(columns)
+      .range(offset, offset + FACET_PAGE_SIZE - 1);
+    if (error) throw error;
+    const rows = (data ?? []) as unknown as Array<Record<string, unknown>>;
+    for (const row of rows) {
+      for (const col of HISTORICAL_FACET_COLUMNS) {
+        const value = String(row[col] ?? "").trim();
+        // "#N/A" and "null" are spreadsheet artifacts in the imported history.
+        if (value && value !== "#N/A" && value !== "null") sets.get(col)?.add(value);
+      }
+    }
+    if (rows.length < FACET_PAGE_SIZE) break;
+  }
+
+  const sorted = (col: (typeof HISTORICAL_FACET_COLUMNS)[number]) =>
+    [...(sets.get(col) ?? [])].sort((a, b) => a.localeCompare(b)).slice(0, FACET_MAX_VALUES);
+
+  return {
+    yarnTypes: sorted("yarn_type"),
+    knitTypes: sorted("knit_type"),
+    machineTypes: sorted("machine_type"),
+    constructions: sorted("construction"),
+    categories: sorted("product_category"),
+    factories: sorted("factory_name"),
+    brands: sorted("brand"),
+    customers: sorted("customer"),
+    seasons: sorted("season")
+  };
 }
 
 export type LikeStyleMatch = HistoricalCostingRow & {
@@ -466,6 +564,151 @@ export type LikeStyleMatchInput = {
   minScore?: number;
   limit?: number;
 };
+
+export type MachineSpeed = {
+  machineType: string;
+  /** Null when no matched style recorded a knitting time for this machine. */
+  avgKnittingTime: number | null;
+  /** How many matched styles carried a knitting time. */
+  sampleSize: number;
+  /** Currency the cost and margin averages are expressed in (dominant one). */
+  currency: string;
+  /** Average cost basis per unit (landed when known, else the FOB total). */
+  avgLandedCost: number | null;
+  /** How many matched styles carried a cost — the average is over these only. */
+  costSampleSize: number;
+  /**
+   * Average profit per unit (selling price − cost basis). Null unless at least
+   * one matched style carries a real selling price: imported history has none,
+   * and a markup estimate would not be a margin.
+   */
+  avgMargin: number | null;
+  /** How many matched styles carried a real selling price. */
+  marginSampleSize: number;
+};
+
+/**
+ * Reference card for a match set: the averages plus how many matched styles
+ * actually carry the figure being averaged. Imported history often has no
+ * consumption / knitting time, so the sample sizes travel with the averages —
+ * a mean over 3 of 10 styles must never be presented as covering all 10.
+ */
+export type LikeStylesSummary = {
+  averageConsumption: number | null;
+  consumptionSampleSize: number;
+  averageKnittingTime: number | null;
+  knittingSampleSize: number;
+  sampleSize: number;
+  machineSpeeds: MachineSpeed[];
+};
+
+const finiteNumbers = (values: Array<number | null | undefined>) =>
+  values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+
+const mean = (values: number[]) =>
+  values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+
+/**
+ * Summarizes matched historical styles into the averages + machine speed table
+ * (fastest machine first), from the same pool the search already loaded.
+ */
+/**
+ * Cost basis per row, mirroring the margin panel's rule: the landed cost when
+ * it is known, otherwise the approved FOB total.
+ */
+function dominantCurrency(counts: Map<string, number>): string {
+  let best = "USD";
+  let bestCount = 0;
+  for (const [currency, count] of counts) {
+    if (count > bestCount) {
+      best = currency;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+function costBasisFor(row: LikeStyleMatch): number | null {
+  const landed = row.landed_cost;
+  if (typeof landed === "number" && Number.isFinite(landed) && landed > 0) return landed;
+  const total = row.total_cost;
+  return typeof total === "number" && Number.isFinite(total) && total > 0 ? total : null;
+}
+
+/**
+ * Summarizes matched historical styles into the averages + machine speed table
+ * (fastest machine first), from the same pool the search already loaded. Each
+ * machine carries its own sample sizes: speed, cost, and margin are averaged
+ * over the styles that actually hold that figure, never over the whole bucket.
+ */
+export function summarizeLikeStyleMatches(matches: LikeStyleMatch[]): LikeStylesSummary {
+  const consumptions = finiteNumbers(matches.map((row) => row.average_consumption));
+  const knittingTimes = finiteNumbers(matches.map((row) => row.knitting_time));
+
+  const byMachine = new Map<
+    string,
+    {
+      time: { total: number; count: number };
+      cost: { total: number; count: number; currencies: Map<string, number> };
+      margin: { total: number; count: number };
+    }
+  >();
+  for (const row of matches) {
+    const machine = row.machine_type?.trim();
+    if (!machine) continue;
+    const bucket = byMachine.get(machine) ?? {
+      time: { total: 0, count: 0 },
+      cost: { total: 0, count: 0, currencies: new Map<string, number>() },
+      margin: { total: 0, count: 0 }
+    };
+    const time = row.knitting_time;
+    if (typeof time === "number" && Number.isFinite(time)) {
+      bucket.time.total += time;
+      bucket.time.count += 1;
+    }
+    const cost = costBasisFor(row);
+    const selling = row.selling_price;
+    const price = typeof selling === "number" && Number.isFinite(selling) && selling > 0 ? selling : null;
+    if (cost !== null) {
+      bucket.cost.total += cost;
+      bucket.cost.count += 1;
+      const currency = row.currency?.trim() || "USD";
+      bucket.cost.currencies.set(currency, (bucket.cost.currencies.get(currency) ?? 0) + 1);
+      if (price !== null) {
+        bucket.margin.total += price - cost;
+        bucket.margin.count += 1;
+      }
+    }
+    byMachine.set(machine, bucket);
+  }
+
+  return {
+    averageConsumption: mean(consumptions),
+    consumptionSampleSize: consumptions.length,
+    averageKnittingTime: mean(knittingTimes),
+    knittingSampleSize: knittingTimes.length,
+    sampleSize: matches.length,
+    // Machines with no recorded speed still carry cost, so they are listed
+    // after the timed ones rather than dropped from the comparison.
+    machineSpeeds: [...byMachine.entries()]
+      .map(([machineType, bucket]) => ({
+        machineType,
+        avgKnittingTime: bucket.time.count ? bucket.time.total / bucket.time.count : null,
+        sampleSize: bucket.time.count,
+        // Averages are never converted: the dominant currency among the styles
+        // that carry a cost is stated alongside them.
+        currency: dominantCurrency(bucket.cost.currencies),
+        avgLandedCost: bucket.cost.count ? bucket.cost.total / bucket.cost.count : null,
+        costSampleSize: bucket.cost.count,
+        avgMargin: bucket.margin.count ? bucket.margin.total / bucket.margin.count : null,
+        marginSampleSize: bucket.margin.count
+      }))
+      .sort(
+        (a, b) =>
+          (a.avgKnittingTime ?? Number.POSITIVE_INFINITY) - (b.avgKnittingTime ?? Number.POSITIVE_INFINITY)
+      )
+  };
+}
 
 export async function tryListHistoricalCostings(input?: Parameters<typeof listHistoricalCostings>[0]) {
   try {

@@ -1,3 +1,4 @@
+import { createTtlMap } from "@/lib/cache/stale-while-revalidate";
 import { getNextGenBaseUrl, nextGenEndpoints, type NextGenEndpointKey } from "./config";
 import { getNextGenSessionCookie, invalidateNextGenSession } from "./session";
 
@@ -24,23 +25,8 @@ function isRetryableStatus(status: number): boolean {
   return status >= 500 || status === 429;
 }
 
-// Simple in-memory cache for GET responses (TTL in ms, default 5 minutes)
-const CACHE_TTL_MS = Number(process.env.NEXTGEN_CACHE_TTL_MS ?? 5 * 60 * 1000);
-const responseCache = new Map<string, { body: unknown; expiresAt: number }>();
-
-function getCachedResponse(key: string): unknown | null {
-  const entry = responseCache.get(key);
-  if (!entry) return null;
-  if (Date.now() > entry.expiresAt) {
-    responseCache.delete(key);
-    return null;
-  }
-  return entry.body;
-}
-
-function setCachedResponse(key: string, body: unknown): void {
-  responseCache.set(key, { body, expiresAt: Date.now() + CACHE_TTL_MS });
-}
+// In-memory memo of GET responses (TTL in ms, default 5 minutes).
+const responseCache = createTtlMap<unknown>(Number(process.env.NEXTGEN_CACHE_TTL_MS ?? 5 * 60 * 1000));
 
 function toFormData(payload: RequestPayload) {
   const body = new URLSearchParams();
@@ -108,11 +94,58 @@ export async function nextGenPost(endpoint: NextGenEndpointKey, payload: Request
   return doNextGenPost(endpoint, payload);
 }
 
+/**
+ * nextGenPost that never throws. Session/transport failures (login backoff,
+ * unreachable host) reject from doNextGenPost, which would otherwise surface
+ * as a 500 in the route layer. This wrapper converts them into a graceful
+ * 502-style upstream error so routes report "upstream unavailable" instead.
+ */
+export async function safeNextGenPost(
+  endpoint: NextGenEndpointKey,
+  payload: RequestPayload
+): Promise<{ ok: boolean; status: number; upstreamContentType: string; body: unknown }> {
+  try {
+    return await nextGenPost(endpoint, payload);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      ok: false,
+      status: 502,
+      upstreamContentType: "text/plain",
+      body: { error: message }
+    };
+  }
+}
+
+/**
+ * A single bounded upstream attempt for interactive screens. Use this only
+ * where waiting through the normal retry/backoff cycle would leave a user
+ * staring at a blocked form. Callers still receive the same safe 502-shaped
+ * result when NextGen is unavailable.
+ */
+export async function safeNextGenPostOnce(
+  endpoint: NextGenEndpointKey,
+  payload: RequestPayload,
+  timeoutMs = 8000
+): Promise<{ ok: boolean; status: number; upstreamContentType: string; body: unknown }> {
+  try {
+    return await doNextGenPost(endpoint, payload, timeoutMs);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      ok: false,
+      status: 502,
+      upstreamContentType: "text/plain",
+      body: { error: message }
+    };
+  }
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function doNextGenPost(endpoint: NextGenEndpointKey, payload: RequestPayload) {
+async function doNextGenPost(endpoint: NextGenEndpointKey, payload: RequestPayload, timeoutMs = NEXTGEN_TIMEOUT_MS) {
   const response = await fetchWithTimeout(`${getNextGenBaseUrl()}${nextGenEndpoints[endpoint]}`, {
     method: "POST",
     body: toFormData(payload),
@@ -122,7 +155,7 @@ async function doNextGenPost(endpoint: NextGenEndpointKey, payload: RequestPaylo
       "X-Requested-With": "XMLHttpRequest",
       Cookie: await getNextGenSessionCookie()
     }
-  });
+  }, timeoutMs);
 
   return parseNextGenResponse(response);
 }
@@ -130,7 +163,7 @@ async function doNextGenPost(endpoint: NextGenEndpointKey, payload: RequestPaylo
 export async function nextGenGet(endpoint: NextGenEndpointKey, params: RequestPayload) {
   // Check cache first for GET requests
   const cacheKey = `get:${endpoint}:${JSON.stringify(params)}`;
-  const cached = getCachedResponse(cacheKey);
+  const cached = responseCache.get(cacheKey);
   if (cached) {
     return { ok: true, status: 200, upstreamContentType: "application/json", body: cached };
   }
@@ -150,7 +183,7 @@ export async function nextGenGet(endpoint: NextGenEndpointKey, params: RequestPa
 
     // Cache successful responses
     if (result.ok) {
-      setCachedResponse(cacheKey, result.body);
+      responseCache.set(cacheKey, result.body);
     }
 
     return result;
@@ -225,9 +258,8 @@ async function parseNextGenResponse(response: Response) {
   };
 }
 
-// In-memory cache for product images (TTL 10 minutes)
-const IMAGE_CACHE_TTL_MS = 10 * 60 * 1000;
-const imageCache = new Map<string, { buffer: Buffer; contentType: string; expiresAt: number }>();
+// In-memory cache for product images (TTL 10 minutes).
+const imageCache = createTtlMap<{ buffer: Buffer; contentType: string }>(10 * 60 * 1000);
 
 function detectImageContentType(buffer: Buffer, upstreamContentType: string) {
   // NextGen occasionally labels PNG bytes as image/jpeg. Prefer the file
@@ -269,9 +301,7 @@ export type ProductImageResult =
 export async function fetchProductImage(entityId: string): Promise<ProductImageResult> {
   // Check cache first
   const cached = imageCache.get(entityId);
-  if (cached && Date.now() < cached.expiresAt) {
-    return { ok: true, buffer: cached.buffer, contentType: cached.contentType };
-  }
+  if (cached) return { ok: true, buffer: cached.buffer, contentType: cached.contentType };
 
   let baseUrl: string;
   try {
@@ -351,11 +381,7 @@ export async function fetchProductImage(entityId: string): Promise<ProductImageR
         const normalizedContentType = detectImageContentType(buffer, contentType);
 
         // Cache the result
-        imageCache.set(entityId, {
-          buffer,
-          contentType: normalizedContentType,
-          expiresAt: Date.now() + IMAGE_CACHE_TTL_MS
-        });
+        imageCache.set(entityId, { buffer, contentType: normalizedContentType });
 
         return { ok: true, buffer, contentType: normalizedContentType };
       } catch (error) {

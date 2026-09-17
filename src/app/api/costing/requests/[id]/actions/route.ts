@@ -17,7 +17,7 @@ export async function POST(request: Request, context: { params: { id: string } }
   const body = await request.json().catch(() => null);
   const validation = validateBody(actionSchema, body);
   if (!validation.success) return validation.response;
-  const { action, comment } = validation.data;
+  const { action, comment, changeRequest } = validation.data;
 
   // Determine which role is required based on the action. The action groups
   // come from the canonical action module, not a local copy.
@@ -60,7 +60,7 @@ export async function POST(request: Request, context: { params: { id: string } }
   }
 
   try {
-    const data = await runCostingAction(context.params.id, action, comment ?? null, role, userName, userId);
+    const data = await runCostingAction(context.params.id, action, comment ?? null, role, userName, userId, changeRequest ?? null);
     return NextResponse.json({ ok: true, ...data });
   } catch (error) {
     const message = error instanceof Error ? error.message : (error as { message?: string; code?: string })?.message || (error as { code?: string })?.code || "Action failed";

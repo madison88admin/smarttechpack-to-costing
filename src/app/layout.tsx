@@ -5,7 +5,11 @@ import { Toaster } from "@/components/ui/toaster";
 
 export const metadata: Metadata = {
   title: "Smart TP Costing",
-  description: "Smart Tech Pack-to-Costing Approval Tool"
+  description: "Smart Tech Pack-to-Costing Approval Tool",
+  icons: {
+    icon: "/m88logo.png",
+    apple: "/m88logo.png"
+  }
 };
 
 export const viewport = {

@@ -1,6 +1,6 @@
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { recordWorkflowEvent } from "@/lib/workflow/events";
-import { enqueueCostingChangeAlert, nextGenBomChangedAlertBody } from "@/lib/notifications/workflow-alerts";
+import { enqueueChangeAlert, nextGenBomChangedAlertBody } from "@/lib/notifications/workflow-alerts";
 import { fetchBom } from "./bom";
 
 /**
@@ -150,7 +150,8 @@ export async function checkBomVersions(limit = 300): Promise<BomVersionCheckResu
             commentAfter: currentComment
           });
 
-          await enqueueCostingChangeAlert({
+          await enqueueChangeAlert({
+            recipientRole: "costing",
             requestId: req.id,
             requestNumber: req.request_number,
             factoryName: req.factory_name,

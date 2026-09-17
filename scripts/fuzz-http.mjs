@@ -81,8 +81,7 @@ export const ENDPOINTS = [
   { path: "/api/nextgen/po/search", role: "pbd", params: ["q"], allow: [502, 503, 504], slow: true, requiresUpstream: true },
   { path: "/api/product/search", role: "pbd", params: ["q"], allow: [502, 503, 504], slow: true, requiresUpstream: true },
   { path: "/api/historical/like-styles", role: "pbd", params: ["limit", "minScore", "yarnType", "knitType", "machineType", "construction", "category", "factory", "brand", "customer", "season", "notes"] },
-  { path: "/api/historical/search", role: "pbd", params: ["brand", "customer", "factory", "limit", "q", "season"] },
-  { path: "/api/material-library", role: "pbd", params: ["category", "q"] }
+  { path: "/api/historical/search", role: "pbd", params: ["brand", "customer", "factory", "limit", "q", "season"] }
 ];
 
 const FAKE_ID = "00000000-0000-4000-8000-000000000000";
@@ -108,6 +107,25 @@ export function mintToken(secret, role) {
   return `${payload}.${sig}`;
 }
 
+// PostgREST authenticates with a real JWT (header.payload.signature) carrying a
+// `role` claim. mintToken above is the app's own 2-part session-cookie scheme, so
+// a service-role key for PostgREST needs its own signer — using mintToken there
+// produced a key PostgREST rejects, which 401'd every query in the CI boot.
+export function mintJwt(secret, role, ttlSeconds = 60 * 60 * 8) {
+  const now = Math.floor(Date.now() / 1000);
+  const header = base64Url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
+  const payload = base64Url(
+    JSON.stringify({
+      role,
+      iss: "supabase",
+      iat: now,
+      exp: now + ttlSeconds
+    })
+  );
+  const sig = createHmac("sha256", secret).update(`${header}.${payload}`).digest("base64url");
+  return `${header}.${payload}.${sig}`;
+}
+
 async function probe(url, token, timeoutMs, allow) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -119,7 +137,10 @@ async function probe(url, token, timeoutMs, allow) {
       signal: controller.signal
     });
     const allowed = allow?.includes(res.status) ?? false;
-    return { ok: res.status < 500 || allowed, status: res.status, ms: Date.now() - started, url, kind: res.status >= 500 && !allowed ? "http>=500" : "http" };
+    const failed = res.status >= 500 && !allowed;
+    // A 500 without its message is undiagnosable from CI, so keep the body.
+    const body = failed ? (await res.text().catch(() => "")).replace(/\s+/g, " ").slice(0, 300) : undefined;
+    return { ok: !failed, status: res.status, ms: Date.now() - started, url, kind: failed ? "http>=500" : "http", body };
   } catch (error) {
     return {
       ok: false,
@@ -201,6 +222,7 @@ async function runSinglePass({ base, endpoints, token, label, timeoutMs, concurr
 
   for (const f of failures.slice(0, 20)) {
     console.log(`  FAIL [${f.kind}${f.status ? ` ${f.status}` : ""} in ${f.ms}ms] ${f.label}${f.error ? ` — ${f.error}` : ""}`);
+    if (f.body) console.log(`       body: ${f.body}`);
   }
   if (failures.length > 20) console.log(`  …and ${failures.length - 20} more failures`);
 

@@ -1,4 +1,5 @@
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { fetchNextGenPricingSnapshot, nextGenPricingFromRaw } from "@/lib/costing/nextgen-pricing";
 import { pgrestLike, pgrestOrTerms, pgrestValue } from "@/lib/supabase/filters";
 import { phaseOneStatuses, type CostingStatus } from "@/lib/workflow/status";
 
@@ -540,6 +541,20 @@ export async function createCostingRequest(input: CreateCostingRequestInput) {
             notes: input.notes ?? null
           }
   };
+
+  // Best-effort ERP pricing backfill: API-created requests often carry only
+  // the entity id, which leaves no selling/purchase price for the approval
+  // gate and margin math. Pull the pricing keys straight from NextGen and
+  // merge them under any caller-provided values. Never blocks creation.
+  if (input.nextgenEntityId && nextGenPricingFromRaw(productPayload.raw_payload).sellingPrice === null) {
+    const pricing = await fetchNextGenPricingSnapshot(input.nextgenEntityId);
+    if (pricing) {
+      productPayload.raw_payload = {
+        ...pricing,
+        ...(productPayload.raw_payload as Record<string, unknown>)
+      };
+    }
+  }
 
   const { data: product, error: productError } = await supabase
     .from("nextgen_products")

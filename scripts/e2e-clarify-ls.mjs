@@ -12,6 +12,8 @@
 
 import { readFileSync, existsSync } from "node:fs";
 import { mintCookie } from "./mint-cookie.mjs";
+import { chromium } from "@playwright/test";
+import { beginDriverRun } from "./lib/driver-guard.mjs";
 
 const BASE = process.argv[2] ?? "http://localhost:3120";
 
@@ -84,7 +86,7 @@ function check(name, pass, detail = "") {
   console.log(`${pass ? "PASS" : "FAIL"}  ${name}${detail ? ` — ${detail}` : ""}`);
 }
 
-const cbdBody = (styleNumber) => ({
+const cbdBody = (styleNumber, overrides = {}) => ({
   status: "submitted",
   currency: "USD",
   styleNumber,
@@ -107,7 +109,8 @@ const cbdBody = (styleNumber) => ({
   machineType: "Flat 12G",
   construction: "Rib",
   productCategory: "T-Shirt",
-  notes: "Clarify-loop automated CBD"
+  notes: "Clarify-loop automated CBD",
+  ...overrides
 });
 
 const CHECKLIST = {
@@ -127,12 +130,13 @@ async function makeRequest(tag) {
   const created = await api("/api/costing/requests", {
     method: "POST",
     role: "pbd",
-    body: { styleNumber, productName: `Clarify ${tag}`, factoryName: "E2E TEST FACTORY", season: "E2E", brand: "E2E Brand", customer: "E2E Customer", notes: "clarify loop" },
+    body: { styleNumber, productName: `Clarify ${tag}`, factoryName: "E2E TEST FACTORY", season: "E2E", brand: "E2E Brand", customer: "E2E Customer", notes: `clarify loop [${MARKER}]` },
     expect: 201
   });
   const id = created.json?.data?.id;
   check(`create (${tag})`, Boolean(id), styleNumber);
-  if (!id) process.exit(1);
+  // Throw, not exit: the guard converts this into a cleaned-up failure.
+  if (!id) throw new Error(`create (${tag}) returned no id`);
   REQUEST_IDS.push(id);
   const sent = await api(`/api/costing/requests/${id}/actions`, { method: "POST", role: "pbd", body: { action: "send_to_factory" }, expect: 200 });
   check(`send_to_factory (${tag})`, sent.json?.status === "sent_to_factory", String(sent.json?.status));
@@ -146,7 +150,18 @@ async function makeRequest(tag) {
   return { id, assigned };
 }
 
+const MARKER = "E2E-CLARIFY";
+const DB_HEADERS = {
+  apikey: SERVICE_KEY,
+  Authorization: `Bearer ${SERVICE_KEY}`,
+  "Accept-Profile": "tp_costing",
+  "Content-Profile": "tp_costing"
+};
+let run = null;
+
+/** Deletes one request and its children; safe to call on any exit path. */
 async function cleanup(requestId, styleNumber) {
+  if (!requestId) return;
   for (const table of [
     "customer_approval_attachments", "customer_revision_history", "checklist_results",
     "approval_actions", "workflow_events", "cbd_material_lines", "factory_cbds",
@@ -163,6 +178,13 @@ async function cleanup(requestId, styleNumber) {
 }
 
 async function main() {
+  // Refuses to run over a previous run's leftovers; owns cleanup for every
+  // exit path, so an interrupted run cannot leave test requests behind.
+  run = await beginDriverRun({ name: "e2e-clarify-ls", marker: MARKER, rest: PGREST, headers: DB_HEADERS });
+  const created = [];
+  run.track(async () => {
+    for (const entry of created) await cleanup(entry.id, entry.styleNumber);
+  });
   // ── A. Clarification loop: MD ──────────────────────────────────────────────
   const mdReq = await makeRequest("MD");
   const { id: mdId, assigned: mdAssigned } = mdReq;
@@ -190,9 +212,93 @@ async function main() {
   await api(`/api/costing/requests/${mdId}/checklist`, { method: "POST", role: "costing", body: CHECKLIST, expect: 200 });
   const costClarify = await api(`/api/costing/requests/${mdId}/actions`, { method: "POST", role: "costing", body: { action: "costing_clarify", comment: "E2E: verify labor rate" }, expect: 200 });
   check("costing_clarify → needs_clarification", costClarify.json?.status === "needs_clarification", String(costClarify.json?.status));
-  await api(`/api/costing/requests/${mdId}/cbd`, { method: "POST", role: mdAssigned, body: cbdBody(`E2E-CLR-MD-${stamp}`), expect: 201 });
+  const revisedCbd = cbdBody(`E2E-CLR-MD-${stamp}`, {
+    // Intentional, detectable revision: the comparison must show precisely
+    // what Factory changed after Costing requested a correction.
+    machineType: "Flat 7G",
+    knittingLines: [{ name: "Knitting", machineType: "Flat 7G", knittingTime: 12, knittingCost: 0.24 }],
+    laborCost: 0.65,
+    standardPackagingCost: 0.18,
+    notes: "E2E revision: corrected gauge, labor, and packaging"
+  });
+  await api(`/api/costing/requests/${mdId}/cbd`, { method: "POST", role: mdAssigned, body: revisedCbd, expect: 201 });
   const [costReturn] = await db(`/costing_requests?select=status&id=eq.${mdId}`);
   check("resubmit returns to for_costing_review", costReturn?.status === "for_costing_review", String(costReturn?.status));
+  const revisionPage = await fetch(`${BASE}/requests/${mdId}/cbd-diff`, { headers: { Cookie: cookie("costing") } });
+  const revisionHtml = await revisionPage.text();
+  check("revision page returns for authorized reviewer", revisionPage.status === 200, String(revisionPage.status));
+  check(
+    "side-by-side comparison identifies machine/gauge correction",
+    revisionHtml.includes("Machine / Gauge Type") && revisionHtml.includes("Flat 12G") && revisionHtml.includes("Flat 7G"),
+    "Flat 12G → Flat 7G"
+  );
+  check(
+    "revision comparison links changed fields to CBD sections",
+    revisionHtml.includes("Knitting &amp; Operations") && revisionHtml.includes("Open section"),
+    "Knitting & Operations shortcut"
+  );
+  check(
+    "revision comparison displays the requester’s clarification note",
+    revisionHtml.includes("Requested change") && revisionHtml.includes("E2E: verify labor rate"),
+    "Costing clarification shown beside the revised CBD"
+  );
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  await context.addCookies([{ name: "tp_costing_session", value: cookie("costing").replace("tp_costing_session=", ""), url: BASE }]);
+  const revisionUi = await context.newPage();
+  const browserErrors = [];
+  revisionUi.on("pageerror", (error) => browserErrors.push(error.message));
+  await revisionUi.goto(`${BASE}/requests/${mdId}/cbd-diff`, { waitUntil: "domcontentloaded" });
+  const revisionText = await revisionUi.locator("body").innerText();
+  check(
+    "browser UI shows requested change beside the revision",
+    revisionText.includes("Requested change") && revisionText.includes("E2E: verify labor rate"),
+    "request note visible"
+  );
+  check(
+    "browser UI shows previous and revised gauge values",
+    revisionText.includes("Machine / Gauge Type") && revisionText.includes("Flat 12G") && revisionText.includes("Flat 7G"),
+    "Flat 12G → Flat 7G visible"
+  );
+  check(
+    "browser UI exposes the CBD section shortcut without client errors",
+    revisionText.includes("Knitting & Operations") && revisionText.includes("Open section") && browserErrors.length === 0,
+    browserErrors.length ? browserErrors.join("; ") : "shortcut visible"
+  );
+  const changedFieldLinks = await revisionUi.locator("a.table-action").all();
+  let changedFieldHref = null;
+  for (const link of changedFieldLinks) {
+    const href = await link.getAttribute("href");
+    if (href?.includes("change=knittingLines")) { changedFieldHref = href; break; }
+  }
+  check(
+    "revision shortcut carries the exact changed field identity",
+    Boolean(changedFieldHref?.includes("change=knittingLines")) && Boolean(changedFieldHref?.includes("revision=1")),
+    changedFieldHref ?? "missing href"
+  );
+  if (changedFieldHref) await revisionUi.goto(`${BASE}${changedFieldHref}`, { waitUntil: "domcontentloaded" });
+  const cbdRevisionFocus = changedFieldHref ? await revisionUi.locator("body").innerText() : "";
+  const revisionHighlightProbe = changedFieldHref
+    ? await revisionUi.evaluate(() => ({
+        hints: document.querySelectorAll(".cbd-revision-field-hint").length,
+        highlighted: document.querySelectorAll(".cbd-revision-field").length,
+        hintTexts: Array.from(document.querySelectorAll(".cbd-revision-field-hint")).map((el) => el.textContent.replace(/\s+/g, " ").trim()).slice(0, 6),
+        highlightedLabels: Array.from(document.querySelectorAll(".cbd-revision-field")).map((el) => el.getAttribute("name") ?? el.tagName).slice(0, 4)
+      }))
+    : null;
+  const revisionHintTexts = revisionHighlightProbe?.hintTexts ?? [];
+  check(
+    "CBD form highlights the exact revised field after opening the shortcut",
+    // The notice heading, plus the per-field hint that strikes the old value
+    // through and shows the new one. The hint is read from the elements, not the
+    // page text: it is a flex row, so `innerText` splits "Changed: / 12G / →"
+    // across lines and a substring match on the body text never lines up.
+    cbdRevisionFocus.includes("Changes in this CBD revision") &&
+      revisionHintTexts.some((text) => text.includes("Changed: Flat 12G → Flat 7G")) &&
+      cbdRevisionFocus.includes("Machine / Gauge Type"),
+    `hints=${JSON.stringify(revisionHintTexts)}`
+  );
+  await browser.close();
   const costComplete = await api(`/api/costing/requests/${mdId}/actions`, { method: "POST", role: "costing", body: { action: "costing_complete" }, expect: 200 });
   check("costing_complete → for_pbd_review", costComplete.json?.status === "for_pbd_review", String(costComplete.json?.status));
 
@@ -283,15 +389,20 @@ async function main() {
   check("admin severity filter returns rows (logs.csv)", logs.status === 200 && csvLines >= 1, `csvLines=${csvLines}`);
 
   // ── Cleanup ─────────────────────────────────────────────────────────────────
-  await cleanup(mdId, `E2E-CLR-MD-${stamp}`);
-  await cleanup(rejId, `E2E-CLR-REJ-${stamp}`);
+  created.push({ id: mdId, styleNumber: `E2E-CLR-MD-${stamp}` });
+  created.push({ id: rejId, styleNumber: `E2E-CLR-REJ-${stamp}` });
+  await run.finish();
 
   const failed = results.filter((r) => !r.pass);
   console.log(`\n══════════════════════════════════════════`);
   console.log(`CLARIFY/LS/HISTORICAL: ${results.length - failed.length}/${results.length} checks passed`);
   if (failed.length) {
     for (const f of failed) console.log(`  - ${f.name}`);
-    process.exit(1);
+    // `return`, not `process.exit`: the guard defers a driver-initiated exit so
+    // it can finish cleaning up, which would otherwise let this line's opposite
+    // print and report a failing run as "ALL CHECKS PASSED".
+    process.exitCode = 1;
+    return;
   }
   console.log("ALL CHECKS PASSED");
 }

@@ -21,6 +21,9 @@ refetch-output.txt
 test-product-image.png
 img-*.jpg
 tmp/
+
+# Dev/QA server run logs — never commit run output
+*.log
 tests/test-results.log
 .freebuff/
 diagram-preview/
@@ -28,3 +31,9 @@ diagram-preview/
 # Live session cookies / minted auth tokens — never commit
 cookies-*.txt
 *-cookie.txt
+
+# Pre-wipe JSON snapshots of the live database — never commit
+backups/
+
+# Playwright run artifacts
+test-results/

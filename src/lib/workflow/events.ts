@@ -8,6 +8,12 @@ export async function recordWorkflowEvent(
     actorRole?: string | null;
     actorUserId?: string | null;
     payload?: Record<string, unknown>;
+    /**
+     * Defaults to "pending", which hands the event to the notification queue's
+     * fan-out. Pass "skipped" when the caller notifies the right people itself,
+     * so the event is recorded without a second, generic copy being sent.
+     */
+    notificationStatus?: string;
   }
 ) {
   const { error } = await supabase.from("workflow_events").insert({
@@ -16,7 +22,7 @@ export async function recordWorkflowEvent(
     actor_role: input.actorRole ?? null,
     actor_user_id: input.actorUserId ?? null,
     payload: input.payload ?? {},
-    notification_status: "pending"
+    notification_status: input.notificationStatus ?? "pending"
   });
 
   if (error) throw error;

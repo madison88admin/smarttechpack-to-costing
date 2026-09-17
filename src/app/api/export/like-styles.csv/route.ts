@@ -1,13 +1,9 @@
-import { getCurrentRole, type UserRole } from "@/lib/auth/roles";
+import { canAccessHistoricalCostData, getCurrentRole } from "@/lib/auth/roles";
 import { csvResponse } from "@/lib/export/csv";
 import { likeStylesCsv, parseLikeStylesExportParams } from "@/lib/export/like-styles";
 import { findLikeStyles } from "@/lib/costing/history";
 
 export const dynamic = "force-dynamic";
-
-// Like-style comparison sets are for MD, Costing, and PBD (internal costing
-// decision aid) — the same roles as the search page/API.
-const ALLOWED_ROLES: UserRole[] = ["superadmin", "admin", "manager", "pbd", "costing", "md"];
 
 // GET /api/export/like-styles.csv
 // Exports the current Like Styles comparison set (full result list, scored)
@@ -15,7 +11,7 @@ const ALLOWED_ROLES: UserRole[] = ["superadmin", "admin", "manager", "pbd", "cos
 // construction, category, notes, minScore.
 export async function GET(request: Request) {
   const role = getCurrentRole();
-  if (!ALLOWED_ROLES.includes(role)) {
+  if (!canAccessHistoricalCostData(role)) {
     return new Response("Unauthorized", { status: 401 });
   }
 

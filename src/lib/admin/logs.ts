@@ -1,6 +1,43 @@
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { pgrestOrTerms, pgrestValue } from "@/lib/supabase/filters";
 
+/**
+ * Known severity values (from the admin error-log filter). Values outside
+ * this vocabulary are treated as "no filter" — the same security semantics as
+ * the status whitelist — so hostile multi-word values can never reach the
+ * PostgREST .eq() filter where they can hang the query.
+ */
+export const KNOWN_SEVERITIES = ["error", "warning", "info"] as const;
+
+export type LogSeverity = (typeof KNOWN_SEVERITIES)[number];
+
+/**
+ * Known audit event types (from the admin audit filter dropdown). Unknown
+ * values fall back to "no filter" exactly like the status whitelist.
+ */
+export const KNOWN_EVENT_TYPES = [
+  "approve",
+  "reject",
+  "clarify",
+  "costing_clarify",
+  "costing_complete",
+  "factory_submit",
+  "send_to_factory",
+  "md_review",
+  "customer_status_changed",
+  "escalation",
+  "reminder",
+  "cost_sheet_ready",
+  "cost_sheet_not_ready",
+  "bom_changed",
+  "nextgen_backfill",
+  "nextgen_metadata_changed",
+  "pbd_pricing_updated",
+  "factory_assignment_changed"
+] as const;
+
+export type AuditEventType = (typeof KNOWN_EVENT_TYPES)[number];
+
 export async function listSystemErrorLogs(opts?: {
   limit?: number;
   offset?: number;
@@ -17,8 +54,9 @@ export async function listSystemErrorLogs(opts?: {
     .order("created_at", { ascending: false })
     .range(offset, offset + limit - 1);
 
-  if (opts?.severity && opts.severity !== "all") {
-    request = request.eq("severity", pgrestValue(opts.severity));
+  const severity = opts?.severity ?? "all";
+  if (severity !== "all" && (KNOWN_SEVERITIES as readonly string[]).includes(severity)) {
+    request = request.eq("severity", pgrestValue(severity));
   }
 
   if (opts?.query?.trim()) {
@@ -45,12 +83,13 @@ export async function listAuditEvents(opts?: {
 
   let request = supabase
     .from("workflow_events")
-    .select("id,costing_request_id,event_type,actor_role,payload,notification_status,created_at,processed_at", { count: "exact" })
+    .select("id,costing_request_id,event_type,actor_role,actor_user_id,payload,notification_status,created_at,processed_at", { count: "exact" })
     .order("created_at", { ascending: false })
     .range(offset, offset + limit - 1);
 
-  if (opts?.eventType && opts.eventType !== "all") {
-    request = request.eq("event_type", pgrestValue(opts.eventType));
+  const eventType = opts?.eventType ?? "all";
+  if (eventType !== "all" && (KNOWN_EVENT_TYPES as readonly string[]).includes(eventType)) {
+    request = request.eq("event_type", pgrestValue(eventType));
   }
 
   if (opts?.query?.trim()) {

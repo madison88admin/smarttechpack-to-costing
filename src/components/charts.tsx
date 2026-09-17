@@ -210,7 +210,7 @@ export function HBarChart({ items, mainLabel = "Requests", subLabel = "Approved"
           height={18}
           rx={3}
           className={hasSub ? "chart-bar chart-bar-track" : "chart-bar chart-bar-solid"}
-          style={item.color && !hasSub ? { fill: item.color } : undefined}
+          style={{ ...(item.color && !hasSub ? { fill: item.color } : undefined), animationDelay: `${index * 0.04}s` }}
         >
           <title>{`${row.label}: ${row.value}${showShare && total > 1 ? ` (${Math.round((row.value / total) * 100)}% of total)` : ""}`}</title>
         </rect>
@@ -222,6 +222,7 @@ export function HBarChart({ items, mainLabel = "Requests", subLabel = "Approved"
             height={18}
             rx={3}
             className="chart-bar chart-bar-sub"
+            style={{ animationDelay: `${index * 0.04 + 0.1}s` }}
           >
             <title>{`${row.label}: ${row.sub} ${subLabel.toLowerCase()}`}</title>
           </rect>

@@ -39,6 +39,7 @@ function isFactoryAllowedPath(pathname: string) {
   if (/^\/requests\/[0-9a-f-]+$/i.test(pathname)) return true;
   if (pathname === "/api/auth/logout" || pathname === "/api/notifications/pending" || pathname === "/api/notifications/read" || pathname === "/api/costing/import") return true;
   if (/^\/api\/costing\/requests\/[0-9a-f-]+\/cbd$/i.test(pathname)) return true;
+  if (/^\/api\/costing\/requests\/[0-9a-f-]+\/change-requests$/i.test(pathname)) return true;
   if (/^\/api\/product\/[^/]+\/image$/i.test(pathname)) return true;
   return false;
 }

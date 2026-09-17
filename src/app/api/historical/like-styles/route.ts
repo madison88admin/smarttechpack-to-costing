@@ -1,13 +1,12 @@
 import { NextResponse } from "next/server";
-import { findLikeStyles } from "@/lib/costing/history";
-import { getCurrentRole, type UserRole } from "@/lib/auth/roles";
+import { findLikeStyles, summarizeLikeStyleMatches } from "@/lib/costing/history";
+import { canAccessHistoricalCostData, getCurrentRole } from "@/lib/auth/roles";
 
 export const dynamic = "force-dynamic";
 
-// Tyler's ask: a searchable library of comparative historical styles so
-// Costing/MD/PBD can pull comparable examples. Factory is intentionally
-// excluded — like-style comparisons are an internal costing decision aid.
-const ALLOWED_ROLES: UserRole[] = ["admin", "manager", "pbd", "costing", "md"];
+// A searchable library of comparative historical styles so Costing/MD/PBD can
+// pull comparable examples. Factory is intentionally excluded — like-style
+// comparisons are an internal costing decision aid.
 
 // GET /api/historical/like-styles
 // Searches the approved-cost library by yarn/knit/machine/construction/
@@ -17,7 +16,7 @@ const ALLOWED_ROLES: UserRole[] = ["admin", "manager", "pbd", "costing", "md"];
 // construction, category, notes, minScore, limit.
 export async function GET(request: Request) {
   const role = getCurrentRole();
-  if (!ALLOWED_ROLES.includes(role)) {
+  if (!canAccessHistoricalCostData(role)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
@@ -41,26 +40,12 @@ export async function GET(request: Request) {
     });
 
     // Group benchmark across the matched styles so the search doubles as the
-    // "historical avg consumption/knitting time" reference by attribute group.
-    const consumptions = results
-      .map((row) => row.average_consumption)
-      .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
-    const knittingTimes = results
-      .map((row) => row.knitting_time)
-      .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
-
+    // "historical avg consumption/knitting time" reference by attribute group,
+    // plus the per-machine speed table — see summarizeLikeStyleMatches.
     return NextResponse.json({
       ok: true,
       data: results,
-      benchmark: {
-        averageConsumption: consumptions.length
-          ? consumptions.reduce((sum, value) => sum + value, 0) / consumptions.length
-          : null,
-        averageKnittingTime: knittingTimes.length
-          ? knittingTimes.reduce((sum, value) => sum + value, 0) / knittingTimes.length
-          : null,
-        sampleSize: results.length
-      }
+      benchmark: summarizeLikeStyleMatches(results)
     });
   } catch (error) {
     return NextResponse.json(

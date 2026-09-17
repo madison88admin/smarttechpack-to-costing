@@ -15,13 +15,19 @@ export function RequestActions({
   status,
   canAct,
   canCostingAct,
-  pricingReady = true
+  pricingReady = true,
+  openChanges = [],
+  hideLinks = false
 }: {
   requestId: string;
   status: CostingStatus;
   canAct: boolean;
   canCostingAct?: boolean;
   pricingReady?: boolean;
+  /** Open structured change requests — surfaced as a warning, never a block. */
+  openChanges?: Array<{ field: string; requestedValue: string }>;
+  /** Set when embedded on the CBD view itself, where those links point here. */
+  hideLinks?: boolean;
 }) {
   const router = useRouter();
   const { confirm, dialog } = useConfirm();
@@ -42,7 +48,7 @@ export function RequestActions({
     const confirmConfig: Partial<Record<Action, { title: string; message: string; variant: "danger" | "warning" | "success"; confirmLabel: string }>> = {
       approve: {
         title: "Approve Costing Request?",
-        message: "This will mark the request as approved and save it to historical records. This action cannot be undone.",
+        message: `This will mark the request as approved and save it to historical records. This action cannot be undone.${openChanges.length > 0 ? ` Warning: ${openChanges.length} field change request(s) still open (${openChanges.map((c) => `${c.field} → ${c.requestedValue}`).join("; ")}).` : ""}`,
         variant: "success",
         confirmLabel: "Approve"
       },
@@ -118,9 +124,16 @@ export function RequestActions({
   return (
     <div className="action-bar">
       <div className="action-bar-buttons">
-        <Link className="button secondary btn-sm" href={`/factory/${requestId}`}>
-          View CBD
-        </Link>
+        {hideLinks ? null : (
+          <>
+            <Link className="button secondary btn-sm" href={`/factory/${requestId}`}>
+              View CBD
+            </Link>
+            <Link className="button secondary btn-sm" href={`/requests/${requestId}/cbd-diff`}>
+              Review CBD changes
+            </Link>
+          </>
+        )}
         {showSendToFactory ? (
           <button className="button" onClick={() => runAction("send_to_factory")} disabled={busyAction !== null}>
             {busyAction === "send_to_factory" ? <><span className="spinner" /> Sending...</> : <><IconSend size={16} /> Send to Factory</>}
@@ -133,13 +146,13 @@ export function RequestActions({
         <div className="action-section costing-section">
           <div className="action-banner action-banner-costing">
             <strong><IconSearch2 size={16} /> Costing Team Validation Required</strong>
-            <p>Complete the validation checklist below, then send to PBD for internal approval.</p>
+            <p>Review warnings and any Factory revision first. Use “Review CBD changes” to compare old and new values, then complete the checklist or request a correction.</p>
           </div>
           <textarea
             className="input action-comment"
             value={comment}
             onChange={(event) => setComment(event.target.value)}
-            placeholder="Costing validation notes (optional)..."
+            placeholder="Example: Update labor cost from USD 0.50 to USD 0.65; current rate is below the agreed operation cost."
           />
           <div className="action-buttons-row">
             <button className="button secondary" onClick={() => runAction("costing_clarify")} disabled={busyAction !== null}>
@@ -165,17 +178,27 @@ export function RequestActions({
         <div className="action-section pbd-section">
           <div className="action-banner action-banner-warning">
             <strong><IconCheck size={16} /> PBD Review</strong>
-            <p>Review the validated CBD, then request a correction, reject, or approve the internal costing.</p>
+            <p>Review the validated CBD and any Factory revision. Use “Review CBD changes” to compare previous and updated values before requesting a correction, rejecting, or approving.</p>
           </div>
+          {openChanges.length > 0 ? (
+            <div className="notice warning-notice">
+              <strong>{openChanges.length} field change request(s) still open:</strong>{" "}
+              {openChanges.map((c) => `${c.field} → ${c.requestedValue}`).join("; ")}.{" "}
+              <Link className="table-action" href={`/requests/${requestId}/cbd-diff`}>Review status</Link>
+            </div>
+          ) : null}
           <textarea
             className="input action-comment"
             value={comment}
             onChange={(event) => setComment(event.target.value)}
-            placeholder="Review note or clarification for factory..."
+            placeholder="Example: Please revise standard packaging from USD 0.12 to USD 0.18 and explain the supplier quote change."
           />
           {!pricingReady ? (
             <div className="notice warning-notice">
-              Enter and save the PBD selling price before approval. <a href="#pbd-pricing-review">Open Pricing Review</a>
+              Enter and save the PBD selling price before approval.{" "}
+              {/* Absolute, not a bare `#anchor`: this bar is also embedded on the CBD
+                  view, where the pricing section lives on the request page. */}
+              <a href={`/requests/${requestId}#pbd-pricing-review`}>Open Pricing Review</a>
             </div>
           ) : null}
           <div className="action-buttons-row">
@@ -194,7 +217,7 @@ export function RequestActions({
       {showWaitingForFactory ? (
         <div className="action-banner action-banner-info">
           <strong><IconAlert size={16} /> Waiting for Factory Correction</strong>
-          <p>The clarification has been sent. The assigned Factory user can edit and resubmit the CBD directly to PBD review.</p>
+          <p>The clarification has been sent. The assigned Factory user can edit and resubmit the CBD in the Factory workspace — it returns to the team that requested the correction.</p>
         </div>
       ) : null}
       {error ? <span className="action-error">{error}</span> : null}

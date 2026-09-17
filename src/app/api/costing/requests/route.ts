@@ -60,6 +60,45 @@ export async function GET(request: Request) {
   }
 }
 
+type ServiceClient = ReturnType<typeof createSupabaseServiceClient>;
+
+/**
+ * The active requests already open for a style (+ factory), or null when the
+ * lookup itself failed.
+ *
+ * `nextgen_products!inner(...)` here is load-bearing, not decoration. PostgREST
+ * rejects a filter on an embedded table that is missing from `select` with
+ * PGRST108, and the old pre-check both omitted the embed AND destructured only
+ * `data` — so the request 400'd and the swallowed error read as "no duplicates"
+ * on every single create. The library guard then caught the duplicate with a
+ * different payload, which is why the UI's "Create Anyway" button never
+ * appeared for the users who hit it.
+ */
+async function findActiveDuplicates(
+  supabase: ServiceClient,
+  styleNumber: string,
+  factoryName?: string
+): Promise<Array<{ id: string; request_number: string; status: string; factory_name: string | null }> | null> {
+  const { data, error } = await supabase
+    .from("costing_requests")
+    .select("id, request_number, status, factory_name, nextgen_products!inner(style_number)")
+    .eq("nextgen_products.style_number", pgrestValue(styleNumber))
+    .not("status", "in", '("approved","rejected")')
+    .order("created_at", { ascending: false })
+    .limit(5);
+
+  if (error) return null; // unknown — never "none"
+
+  return (data ?? [])
+    .filter((row: any) => !factoryName || row.factory_name?.toLowerCase() === factoryName.toLowerCase())
+    .map((row: any) => ({
+      id: row.id,
+      request_number: row.request_number,
+      status: row.status,
+      factory_name: row.factory_name ?? null
+    }));
+}
+
 export async function POST(request: Request) {
   if (!canCreateRequest(getCurrentRole())) {
     return NextResponse.json({ ok: false, error: "Current role cannot create costing requests" }, { status: 403 });
@@ -72,20 +111,9 @@ export async function POST(request: Request) {
 
   // Duplicate detection: check if there's already an active request for this style + factory
   const supabase = createSupabaseServiceClient();
-  const { data: existing } = await supabase
-    .from("costing_requests")
-    .select("id, request_number, status, factory_name")
-    .eq("nextgen_products.style_number", pgrestValue(validated.styleNumber))
-    .not("status", "in", '("approved","rejected")')
-    .order("created_at", { ascending: false })
-    .limit(5);
+  const activeDuplicates = await findActiveDuplicates(supabase, validated.styleNumber, validated.factoryName);
 
-  const activeDuplicates = (existing ?? []).filter((row: any) => {
-    if (!validated.factoryName) return true;
-    return row.factory_name?.toLowerCase() === validated.factoryName.toLowerCase();
-  });
-
-  if (activeDuplicates.length > 0 && !validated.forceCreate) {
+  if (activeDuplicates && activeDuplicates.length > 0 && !validated.forceCreate) {
     return NextResponse.json({
       ok: false,
       error: "Duplicate request detected",
@@ -117,9 +145,21 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, data }, { status: 201 });
   } catch (error) {
     const message = error instanceof Error ? error.message : (error as any)?.message ?? "Unable to create request";
-    // Duplicate detection error → 409 Conflict
+    // Duplicate detection error → 409 Conflict.
+    // The library guard is the last line of defence: it fires when two creates
+    // race past the pre-check above. Answer with the same `duplicates` contract
+    // the UI consumes, so the user gets "Create Anyway" instead of a bare error
+    // they cannot act on. Fall back to the request number in the message when
+    // the lookup is unavailable.
     if (message.includes("Duplicate active request")) {
-      return NextResponse.json({ ok: false, error: message }, { status: 409 });
+      const found = await findActiveDuplicates(supabase, validated.styleNumber, validated.factoryName);
+      const requestNumber = message.match(/CR-\d+/)?.[0];
+      const duplicates = found?.length
+        ? found
+        : requestNumber
+          ? [{ id: "", request_number: requestNumber, status: "active", factory_name: validated.factoryName ?? null }]
+          : [];
+      return NextResponse.json({ ok: false, error: message, duplicates }, { status: 409 });
     }
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }

@@ -1,5 +1,6 @@
 import { AppShell } from "@/components/app-shell";
 import { AdminChecklistManager } from "@/components/admin-checklist-manager";
+import { AdminNotificationQueue } from "@/components/admin-notification-queue";
 import { AdminRecipientManager } from "@/components/admin-recipient-manager";
 import { CurrencyRateManager } from "@/components/currency-rate-manager";
 import { AdminSettingsForm } from "@/components/admin-settings-form";
@@ -134,6 +135,12 @@ export default async function AdminPage() {
             <h2>Notification Recipients</h2>
             <p className="eyebrow">Configure who receives notifications for each workflow event</p>
             <AdminRecipientManager />
+          </section>
+
+          <section className="panel">
+            <h2>Notification Queue</h2>
+            <p className="eyebrow">Delivery health for queued email and Teams notifications</p>
+            <AdminNotificationQueue />
           </section>
 
           <section className="panel">

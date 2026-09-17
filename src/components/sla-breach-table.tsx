@@ -15,7 +15,9 @@ export function SlaBreachTable({ rows, statusLabels, role }: { rows: SlaBreachRo
   const currentPage = Math.min(page, pageCount - 1);
   const visible = rows.slice(currentPage * 5, (currentPage + 1) * 5);
   const formatDate = (value: string | null) => value ? new Date(value).toLocaleDateString() : "—";
-  const showOwner = role !== "factory";
+  // The parent already scopes the table to the signed-in role. Repeating an
+  // owner label implies cross-role visibility and adds no actionable detail.
+  const showOwner = false;
   return <>
     <table className="table compact"><thead><tr><th>Request</th>{showOwner ? <th>Owner</th> : null}<th>Status</th><th>Factory</th><th>Started</th><th>Days in Status</th><th>SLA Limit</th><th>Deadline</th><th>Breached</th><th>Action</th></tr></thead>
       <tbody>{visible.map((r) => <tr key={r.id}><td><strong>{r.request_number ?? r.id.slice(0, 8)}</strong></td>{showOwner ? <td><span className="status blue">{(r.owner_role ?? "—").replace(/_/g, " ").toUpperCase()}</span></td> : null}<td><span className="status amber">{(statusLabels[r.status] ?? r.status).replace(/_/g, " ")}</span></td><td>{r.factory_name ?? "—"}</td><td className="eyebrow">{formatDate(r.started_at)}</td><td><strong className="text-red">{r.days_in_status}d</strong></td><td>{r.sla_days ? `${r.sla_days}d` : "—"}</td><td className="eyebrow">{formatDate(r.deadline_at)}</td><td className="eyebrow">{formatDate(r.breached_at)}</td><td><Link className="table-action" href={`/requests/${r.id}`}>Open</Link></td></tr>)}</tbody>

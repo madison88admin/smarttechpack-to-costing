@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 
 type Review = {
   comment?: string | null;
@@ -52,7 +53,10 @@ export function MdReviewPanel({
         </div>
         {lastDecision ? <span className={`status ${lastDecision === "pass" ? "green" : "amber"}`}>{lastDecision === "pass" ? "Passed" : "Clarification requested"}</span> : null}
       </div>
-      <p className="eyebrow">Confirm yarn, knit type, machine, and construction against the sample before PBD approval.</p>
+      <p className="eyebrow">Confirm yarn, knit type, machine, and construction against the sample before Costing and PBD approval. Review CBD changes first when the factory has resubmitted a revision.</p>
+      <Link className="button secondary small-btn" href={`/requests/${requestId}/cbd-diff`}>
+        Review CBD changes
+      </Link>
       {lastReview ? <p className="notice">Last MD review: {lastReview.comment || "No notes"}{lastReview.created_at ? ` · ${new Date(lastReview.created_at).toLocaleString()}` : ""}</p> : null}
       {editable ? (
         <div className="form-grid">
@@ -64,8 +68,8 @@ export function MdReviewPanel({
             </select>
           </div>
           <div className="field full">
-            <label htmlFor="md-notes">MD notes</label>
-            <textarea id="md-notes" className="input textarea" value={notes} disabled={busy} onChange={(event) => setNotes(event.target.value)} placeholder="Operations, machine, yarn, or construction findings" />
+            <label htmlFor="md-notes">MD review or requested change</label>
+            <textarea id="md-notes" className="input textarea" value={notes} disabled={busy} onChange={(event) => setNotes(event.target.value)} placeholder="Example: Change machine from Flat 12G to Flat 7G because the sample construction requires 7G." />
           </div>
           <div className="form-actions"><button className="button" type="button" disabled={busy} onClick={submit}>{busy ? "Saving..." : "Record MD Review"}</button></div>
         </div>

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   bomChangedAlertBody,
-  enqueueCostingChangeAlert,
+  enqueueChangeAlert,
   enqueueRoleChangeAlert,
   outlierAcknowledgedAlertBody,
   pbdPricingAlertBody
@@ -26,29 +26,40 @@ afterEach(() => {
 });
 
 describe("bomChangedAlertBody", () => {
+  const base = {
+    requestNumber: "CR-1",
+    factoryName: "Hangzhou U-Jump",
+    changedCount: 2,
+    fobBefore: 10,
+    fobAfter: 12.5,
+    currency: "USD"
+  } as const;
+
   it("reports changed fields and the FOB delta", () => {
-    const { subject, body } = bomChangedAlertBody({
-      requestNumber: "CR-1",
-      factoryName: "Hangzhou U-Jump",
-      changedCount: 3,
-      fobBefore: 10,
-      fobAfter: 12.5,
-      currency: "USD"
-    });
+    const { subject, body } = bomChangedAlertBody({ ...base, changedCount: 3, ownerRole: "costing" });
 
     expect(subject).toContain("CR-1");
     expect(subject).toContain("3 field(s)");
     expect(body).toContain("FOB: USD 10.00 → USD 12.50 (+25.0%)");
   });
 
+  // The copy names whoever actually owns the next step, so nobody is asked to
+  // do another role's job.
+  it.each([
+    ["costing", "Costing re-validation required", "Next step (Costing): re-validate the revised costs before approval."],
+    ["md", "MD review required", "Next step (MD): review the revised material, construction, and consumption figures."]
+  ] as const)("addresses the %s lane", (ownerRole, subjectLabel, nextStepLine) => {
+    const { subject, body } = bomChangedAlertBody({ ...base, ownerRole });
+
+    expect(subject).toContain(subjectLabel);
+    expect(body).toContain(nextStepLine);
+    expect(body).not.toContain("Please re-validate before approval");
+  });
+
   it("lists per-field old → new lines when changes are provided", () => {
     const { body } = bomChangedAlertBody({
-      requestNumber: "CR-1",
-      factoryName: "Hangzhou U-Jump",
-      changedCount: 2,
-      fobBefore: 10,
-      fobAfter: 12.5,
-      currency: "USD",
+      ...base,
+      ownerRole: "costing",
       changes: [
         { field: "Labor Cost", oldValue: "0.75", newValue: "0.80" },
         { field: "MOQ", oldValue: "500", newValue: "1000" }
@@ -65,15 +76,7 @@ describe("bomChangedAlertBody", () => {
       oldValue: "0",
       newValue: "1"
     }));
-    const { body } = bomChangedAlertBody({
-      requestNumber: "CR-1",
-      factoryName: null,
-      changedCount: 10,
-      fobBefore: 1,
-      fobAfter: 2,
-      currency: "USD",
-      changes
-    });
+    const { body } = bomChangedAlertBody({ ...base, factoryName: null, changedCount: 10, ownerRole: "costing", changes });
 
     expect(body).toContain("• Field 7: 0 → 1");
     expect(body).not.toContain("• Field 8: 0 → 1");
@@ -144,29 +147,30 @@ describe("pbdPricingAlertBody", () => {
   });
 });
 
-describe("enqueueCostingChangeAlert", () => {
+describe("enqueueChangeAlert", () => {
+  /** Recipients are resolved per role, so the responder echoes the queried role. */
   function responder(): Responder {
     return {
       user_profiles: {
-        select: () => ({
-          data: [
-            { email: "costing-a@example.com" },
-            { email: "costing-b@example.com" },
-            { email: null }
-          ],
-          error: null
-        })
+        select: (chain) => {
+          const role = chain.eq?.find(([column]) => column === "role")?.[1] ?? "costing";
+          return {
+            data: [{ email: `${role}-a@example.com` }, { email: `${role}-b@example.com` }, { email: null }],
+            error: null
+          };
+        }
       },
       notification_queue: { insert: () => ({ data: [], error: null }) }
     };
   }
 
-  it("enqueues an email per costing-team recipient", async () => {
+  it.each(["costing", "md"] as const)("enqueues an email per %s recipient", async (recipientRole) => {
     const { client, calls } = createMockSupabase(responder());
     mocks.client = client;
     process.env.NEXT_PUBLIC_APP_URL = "http://localhost:3120";
 
-    const enqueued = await enqueueCostingChangeAlert({
+    const enqueued = await enqueueChangeAlert({
+      recipientRole,
       requestId: "req-1",
       requestNumber: "CR-1",
       factoryName: "Hangzhou U-Jump",
@@ -179,8 +183,8 @@ describe("enqueueCostingChangeAlert", () => {
     const rows = inserts(calls, "notification_queue");
     expect(rows).toHaveLength(2);
     expect(rows.map((row: any) => row.recipient)).toEqual([
-      "costing-a@example.com",
-      "costing-b@example.com"
+      `${recipientRole}-a@example.com`,
+      `${recipientRole}-b@example.com`
     ]);
     for (const row of rows as any[]) {
       expect(row).toMatchObject({
@@ -192,13 +196,14 @@ describe("enqueueCostingChangeAlert", () => {
       expect(row.body).toContain("http://localhost:3120/requests/req-1");
     }
 
-    // The change is also surfaced as an in-app alert for the costing team.
+    // The change is also surfaced as an in-app alert for the same role, so the
+    // dashboard badge lands on whoever owns the next step.
     const inApp = inserts(calls, "in_app_alerts");
     expect(inApp).toHaveLength(1);
     expect(inApp[0]).toMatchObject({
       costing_request_id: "req-1",
       alert_type: "bom_changed",
-      recipient_role: "costing",
+      recipient_role: recipientRole,
       title: "[CR-1] BOM / CBD changed by factory — 3 field(s)"
     });
   });
@@ -211,7 +216,8 @@ describe("enqueueCostingChangeAlert", () => {
     mocks.client = client;
     process.env.COSTING_NOTIFICATION_EMAIL = "costing-fallback@example.com";
 
-    const enqueued = await enqueueCostingChangeAlert({
+    const enqueued = await enqueueChangeAlert({
+      recipientRole: "costing",
       requestId: "req-1",
       requestNumber: "CR-1",
       factoryName: null,
@@ -232,7 +238,8 @@ describe("enqueueCostingChangeAlert", () => {
     const { client, calls } = createMockSupabase(responder());
     mocks.client = client;
 
-    await enqueueCostingChangeAlert({
+    await enqueueChangeAlert({
+      recipientRole: "costing",
       requestId: "req-1",
       requestNumber: "CR-1",
       factoryName: "Hangzhou U-Jump",
@@ -253,7 +260,8 @@ describe("enqueueCostingChangeAlert", () => {
   it("never throws — a failed recipient lookup degrades to zero enqueued", async () => {
     mocks.client = { from: () => { throw new Error("boom"); } };
 
-    const enqueued = await enqueueCostingChangeAlert({
+    const enqueued = await enqueueChangeAlert({
+      recipientRole: "costing",
       requestId: "req-1",
       requestNumber: null,
       factoryName: null,

@@ -17,15 +17,31 @@ export function PbdPricingPanel({
   status,
   pricing,
   pricingStatus,
-  canEdit
+  canEdit,
+  nextgenSellingPrice = null,
+  nextgenLandedCost = null,
+  nextgenMargin = null,
+  nextgenPurchasePrice = null,
+  nextgenCurrency = null
 }: {
   requestId: string;
   status: string;
   pricing?: Pricing | null;
   pricingStatus?: string | null;
   canEdit: boolean;
+  /** NextGen-ported figures — satisfy the review without manual entry. */
+  nextgenSellingPrice?: number | null;
+  /** Costing-sheet landed cost (FOB + allowances), when the ERP carries one. */
+  nextgenLandedCost?: number | null;
+  /** The ERP's own margin for the costing (selling − landed). */
+  nextgenMargin?: number | null;
+  nextgenPurchasePrice?: number | null;
+  nextgenCurrency?: string | null;
 }) {
   const router = useRouter();
+  const hasNextgenPrice = nextgenSellingPrice !== null && nextgenSellingPrice > 0;
+  const money = (value: number | null, currency?: string | null) =>
+    value === null ? "—" : `${currency?.trim() || "USD"} ${value.toFixed(2)}`;
   const [form, setForm] = useState({
     wholesalePrice: pricing?.wholesalePrice == null ? "" : String(pricing.wholesalePrice),
     retailPrice: pricing?.retailPrice == null ? "" : String(pricing.retailPrice),
@@ -77,11 +93,30 @@ export function PbdPricingPanel({
           <p className="eyebrow">PBD-owned review input</p>
           <h2>Selling Price & Landed-Cost Pricing</h2>
         </div>
-        <span className={`status ${pricingStatus === "entered" ? "green" : "amber"}`}>
-          {pricingStatus === "entered" ? "Entered" : "Pending"}
+        <span className={`status ${pricingStatus === "entered" || hasNextgenPrice ? "green" : "amber"}`}>
+          {pricingStatus === "entered" ? "Entered" : hasNextgenPrice ? "NextGen" : "Pending"}
         </span>
       </div>
       <p className="eyebrow">Factory CBD supplies the cost basis. PBD records the customer-facing selling price during internal review.</p>
+      {hasNextgenPrice ? (
+        <div className="notice" style={{ borderColor: "#b8d7cc", background: "#ecf8f3", color: "var(--text)" }}>
+          <strong>NextGen already carries this style&apos;s prices — no manual entry needed.</strong>
+          <br />
+          <span>
+            Selling: {money(nextgenSellingPrice, nextgenCurrency)}
+            {nextgenLandedCost !== null ? (
+              <> · Landed cost: {money(nextgenLandedCost, nextgenCurrency)}</>
+            ) : nextgenPurchasePrice !== null ? (
+              <> · Landed-cost basis: {money(nextgenPurchasePrice, nextgenCurrency)}</>
+            ) : null}
+            {nextgenMargin !== null ? <> · Margin: {money(nextgenMargin, nextgenCurrency)}</> : null}
+          </span>
+          <br />
+          <span className="eyebrow">
+            Ported from the NextGen costing sheet. Approval and margin use these figures — the fields below are an optional override.
+          </span>
+        </div>
+      ) : null}
       <div className="form-grid">
         <div className="field">
           <label htmlFor="pbd-wholesale-price">Wholesale price (USD)</label>

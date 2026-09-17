@@ -55,6 +55,7 @@ function approveResponder(overrides: Partial<Responder> = {}): Responder {
           : { data: { id: "cbd-1", raw_payload: cbdPayload }, error: null }
     },
     historical_costings: {
+      maybeSingle: () => ({ data: null, error: null }),
       delete: () => ({ data: [], error: null }),
       insert: () => ({ data: [], error: null })
     },
@@ -64,6 +65,15 @@ function approveResponder(overrides: Partial<Responder> = {}): Responder {
 }
 
 describe("runCostingAction — pre-DB gates", () => {
+  it("preserves the previous historical snapshot when replacement fails", async () => {
+    const { client, calls } = createMockSupabase(approveResponder({ historical_costings: {
+      maybeSingle: () => ({ data: { id: "history-existing" }, error: null }),
+      select: () => ({ data: null, error: new Error("history write failed") })
+    } }));
+    mocks.client = client;
+    await expect(runCostingAction("req-1", "approve", null, "pbd")).rejects.toThrow("history write failed");
+    expect(calls.filter(call => call.table === "historical_costings" && call.terminal === "delete")).toHaveLength(0);
+  });
   it("rejects an unknown action without touching the database", async () => {
     const { client, calls } = createMockSupabase({});
     mocks.client = client;
@@ -183,6 +193,118 @@ describe("approve — single PBD decision", () => {
     expect(result).toEqual({ status: "approved" });
 
     expect(inserts(calls, "historical_costings")).toHaveLength(1);
+  });
+
+  // The historical row is what the Like Styles machine table averages, so the
+  // approval must snapshot the cost basis and the real selling price it was
+  // approved at — the PBD price first, then the NextGen-ported one.
+  it("snapshots the landed cost and the real selling price on the historical row", async () => {
+    const { client, calls } = createMockSupabase(
+      approveResponder({
+        costing_requests: {
+          single: (chain) => {
+            if (chain.select === "status") return { data: { status: "for_pbd_review" }, error: null };
+            if (chain.select === "pbd_pricing_status") return { data: { pbd_pricing_status: "entered" }, error: null };
+            if (String(chain.select).includes("nextgen_products")) {
+              return {
+                data: {
+                  id: "req-1",
+                  factory_name: "Cebu Factory",
+                  pbd_pricing: { wholesalePrice: 12 },
+                  nextgen_products: [{ style_number: "M88-123", name: "Beanie", raw_payload: { DefaultProductCostingCostingSellingPrice: "3.75" } }]
+                },
+                error: null
+              };
+            }
+            return { data: { id: "req-1", factory_name: "Cebu Factory" }, error: null };
+          },
+          select: () => ({ data: [{ id: "req-1" }], error: null })
+        },
+        factory_cbds: {
+          maybeSingle: () => ({
+            data: {
+              id: "cbd-1",
+              raw_payload: { grandTotal: 10, freightCost: 2, currency: "USD" },
+              cbd_material_lines: [{ consumption: 1, total_cost: 5, currency: "USD", material_name: "Yarn" }]
+            },
+            error: null
+          })
+        }
+      })
+    );
+    mocks.client = client;
+
+    await runCostingAction("req-1", "approve", null, "pbd");
+
+    const row = inserts(calls, "historical_costings")[0] as Record<string, unknown>;
+    // Landed cost adds the freight the CBD recorded on top of the line-derived
+    // FOB total (5 material + 2 freight).
+    expect(row.landed_cost).toBe(7);
+    // PBD's own price wins over the NextGen-ported 3.75.
+    expect(row.selling_price).toBe(12);
+  });
+
+  it("falls back to the NextGen selling price when PBD entered none", async () => {
+    const { client, calls } = createMockSupabase(
+      approveResponder({
+        costing_requests: {
+          single: (chain) => {
+            if (chain.select === "status") return { data: { status: "for_pbd_review" }, error: null };
+            if (chain.select === "pbd_pricing_status") return { data: { pbd_pricing_status: "entered" }, error: null };
+            if (String(chain.select).includes("nextgen_products")) {
+              return {
+                data: {
+                  id: "req-1",
+                  factory_name: "Cebu Factory",
+                  pbd_pricing: {},
+                  nextgen_products: [{ style_number: "M88-123", name: "Beanie", raw_payload: { DefaultProductCostingCostingSellingPrice: "3.75" } }]
+                },
+                error: null
+              };
+            }
+            return { data: { id: "req-1", factory_name: "Cebu Factory" }, error: null };
+          },
+          select: () => ({ data: [{ id: "req-1" }], error: null })
+        }
+      })
+    );
+    mocks.client = client;
+
+    await runCostingAction("req-1", "approve", null, "pbd");
+
+    expect((inserts(calls, "historical_costings")[0] as Record<string, unknown>).selling_price).toBe(3.75);
+  });
+
+  // Deploying the app before the migration is applied must never block an
+  // approval: the costing is saved without the cost columns and picks them up
+  // on the next write.
+  it("saves the historical row without the cost columns while migration 018 is pending", async () => {
+    let attempts = 0;
+    const { client, calls } = createMockSupabase(
+      approveResponder({
+        historical_costings: {
+          maybeSingle: () => ({ data: null, error: null }),
+          insert: () => {
+            attempts += 1;
+            return attempts === 1
+              ? { data: null, error: { message: 'column "landed_cost" of relation "historical_costings" does not exist' } }
+              : { data: [], error: null };
+          }
+        }
+      })
+    );
+    mocks.client = client;
+
+    const result = await runCostingAction("req-1", "approve", null, "pbd");
+
+    expect(result).toEqual({ status: "approved" });
+    const rows = inserts(calls, "historical_costings") as Array<Record<string, unknown>>;
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveProperty("landed_cost");
+    expect(rows[1]).not.toHaveProperty("landed_cost");
+    expect(rows[1]).not.toHaveProperty("selling_price");
+    // Everything else about the expensive snapshot is still recorded.
+    expect(rows[1]).toMatchObject({ style_number: "M88-123", factory_name: "Cebu Factory" });
   });
 });
 
@@ -408,6 +530,47 @@ describe("approve — PBD pricing and MD review gates", () => {
     await expect(runCostingAction("req-1", "approve", null, "pbd")).rejects.toThrow(
       "Cannot approve before PBD selling price review is entered."
     );
+  });
+
+  it("approves without manual pricing when NextGen carries the selling price", async () => {
+    const { client, calls } = createMockSupabase(
+      approveResponder({
+        costing_requests: {
+          single: (chain) => {
+            if (chain.select === "status") return { data: { status: "for_pbd_review" }, error: null };
+            if (chain.select === "pbd_pricing_status") return { data: { pbd_pricing_status: null }, error: null };
+            if (String(chain.select).includes("raw_payload")) {
+              return {
+                data: {
+                  nextgen_products: [{
+                    raw_payload: {
+                      DefaultProductCostingCostingSellingPrice: "15.00",
+                      DefaultProductCostingCostingPurchasePrice: "9.00",
+                      DefaultProductCostingCostingSellingCurrencyName: "USD"
+                    }
+                  }]
+                },
+                error: null
+              };
+            }
+            if (chain.select === "id, factory_name, baseline_ref") return { data: { id: "req-1", factory_name: "Cebu Factory" }, error: null };
+            if (String(chain.select).includes("nextgen_products")) {
+              return {
+                data: { id: "req-1", factory_name: "Cebu Factory", nextgen_products: [{ style_number: "M88-123", name: "Beanie" }] },
+                error: null
+              };
+            }
+            throw new Error(`unexpected single read: ${String(chain.select)}`);
+          },
+          select: () => ({ data: [{ id: "req-1" }], error: null })
+        }
+      })
+    );
+    mocks.client = client;
+
+    const result = await runCostingAction("req-1", "approve", null, "pbd");
+    expect(result).toEqual({ status: "approved" });
+    expect(inserts(calls, "approval_actions")).toHaveLength(1);
   });
 
   it("reports when the pbd_pricing column is missing (migration 002 not applied)", async () => {

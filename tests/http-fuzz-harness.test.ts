@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { createHmac } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ENDPOINTS, HOSTILE_NUMERIC, HOSTILE_TEXT, NUMERIC_PARAMS, mintToken } from "../scripts/fuzz-http.mjs";
+import { ENDPOINTS, HOSTILE_NUMERIC, HOSTILE_TEXT, NUMERIC_PARAMS, mintJwt, mintToken } from "../scripts/fuzz-http.mjs";
 
 const API_DIR = join(process.cwd(), "src/app/api");
 
@@ -125,5 +126,20 @@ describe("HTTP fuzz harness — endpoint/param table stays in sync with the sour
     const body = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
     expect(body.role).toBe("pbd");
     expect(body.exp).toBeGreaterThan(Math.floor(Date.now() / 1000));
+  });
+
+  // The CI boot uses this as the PostgREST service-role key, so it has to be a
+  // real JWT — a 2-part token (mintToken) makes PostgREST 401 every query.
+  it("mintJwt produces a verifiable HS256 JWT with the role claim", () => {
+    const secret = "y".repeat(40);
+    const token = mintJwt(secret, "service_role");
+    const [header, payload, sig] = token.split(".");
+    expect(token.split(".")).toHaveLength(3);
+    expect(JSON.parse(Buffer.from(header, "base64url").toString("utf8"))).toMatchObject({ alg: "HS256", typ: "JWT" });
+    const body = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    expect(body.role).toBe("service_role");
+    expect(body.exp).toBeGreaterThan(Math.floor(Date.now() / 1000));
+    const expected = createHmac("sha256", secret).update(`${header}.${payload}`).digest("base64url");
+    expect(sig).toBe(expected);
   });
 });

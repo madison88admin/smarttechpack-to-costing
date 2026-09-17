@@ -15,6 +15,26 @@ export const CUSTOMER_STATUSES = [
 
 export type CustomerStatus = (typeof CUSTOMER_STATUSES)[number];
 
+/** Human-readable customer lifecycle wording shared by tables, detail views, and steppers. */
+export function formatCustomerStatusLabel(status?: string | null): string {
+  if (!status || status === "not_submitted") return "Not submitted";
+
+  const labels: Record<string, string> = {
+    pending_customer_submission: "Ready for customer submission",
+    sent_to_customer: "Sent to customer",
+    under_negotiation: "Under negotiation",
+    customer_approved: "Customer approved",
+    customer_rejected_revised: "Customer revision required",
+    closed: "Closed"
+  };
+  if (labels[status]) return labels[status];
+
+  return status
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 // Single owner of the customer-status machine; the route in
 // src/app/api/costing/requests/[id]/customer-status/route.ts imports these
 // verdicts instead of re-declaring the transitions.

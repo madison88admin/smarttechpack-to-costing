@@ -1,14 +1,17 @@
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { calculateCostingTotals } from "@/lib/costing/totals";
+import { nextGenPricingFromRaw, resolveSellingPrice } from "@/lib/costing/nextgen-pricing";
 
 /**
  * Portfolio-level gross-margin analytics for the dashboard.
  *
  * Gross margin per unit is computed exactly like the request detail page:
- * PBD-entered wholesale price − landed cost (FOB when no landed cost). Only
- * requests where the PBD has actually entered a selling price produce a
- * margin — the derived markup estimate is never mixed into the portfolio
- * numbers. Margin is internal data: the factory never sees this panel.
+ * wholesale price − landed cost (FOB when no landed cost). The wholesale
+ * side prefers manual PBD entry, then the NextGen-ported selling price, then
+ * the derived markup estimate. The cost side prefers the factory's submitted
+ * CBD landed cost, and falls back to the ERP costing sheet's landed cost for
+ * requests the factory has not costed yet. Margin is internal data: the factory
+ * never sees this panel.
  */
 
 export type MarginRequestRow = {
@@ -23,8 +26,8 @@ export type MarginRequestRow = {
   wholesalePrice: number | null;
   /** Landed cost per unit (FOB when no landed cost components were entered). */
   costBasis: number | null;
-  /** "pbd" = real customer-facing price; "derived" = landed × markup estimate. */
-  pricingSource: "pbd" | "derived";
+  /** "pbd" = manually entered; "nextgen" = ERP-ported; "derived" = landed × markup estimate. */
+  pricingSource: "pbd" | "nextgen" | "derived";
   /** Time anchor for the trend (request updated_at, last pricing/approval touch). */
   updatedAt: string | null;
 };
@@ -143,6 +146,7 @@ export async function getMarginAnalytics(thresholdUsd: number) {
         factory_name,
         pbd_pricing,
         updated_at,
+        nextgen_products (raw_payload),
         factory_cbds (
           raw_payload,
           submitted_at,
@@ -170,14 +174,22 @@ export async function getMarginAnalytics(thresholdUsd: number) {
             lines: (latest.cbd_material_lines as Array<{ total_cost: number | null; currency: string | null }> | null) ?? []
           })
         : null;
-      const pricing = (item.pbd_pricing ?? {}) as Record<string, unknown>;
-      const pbdWholesale = typeof pricing.wholesalePrice === "number" ? pricing.wholesalePrice : null;
-      // Real PBD-entered price when present; otherwise fall back to the
-      // derived markup estimate (landed × wholesaleMarkup) so costed requests
-      // still appear in the portfolio. The source is flagged per row.
+      const product = Array.isArray(item.nextgen_products) ? item.nextgen_products[0] : item.nextgen_products;
+      const nextGenRaw = product && typeof product === "object" ? (product as Record<string, unknown>).raw_payload : null;
+      // Manual PBD price wins, then the NextGen-ported selling price (one owner:
+      // resolveSellingPrice); then the derived markup estimate (landed ×
+      // wholesaleMarkup) so costed requests still appear in the portfolio.
+      const realSelling = resolveSellingPrice({ pbdPricing: item.pbd_pricing, nextGenRaw });
       const derivedWholesale = totals && totals.wholesalePrice > 0 ? totals.wholesalePrice : null;
-      const wholesalePrice = pbdWholesale ?? derivedWholesale;
-      const costBasis = totals ? (totals.landedCost > 0 ? totals.landedCost : totals.grandTotal) : null;
+      const wholesalePrice = realSelling.price ?? derivedWholesale;
+      // The factory's own submission is the internal truth once it exists;
+      // before that the ERP costing sheet's landed cost stands in, so a request
+      // created a minute ago already shows the margin its style was costed at.
+      const costBasis = totals
+        ? totals.landedCost > 0
+          ? totals.landedCost
+          : totals.grandTotal
+        : nextGenPricingFromRaw(nextGenRaw).landedCost;
       return {
         requestId: String(item.id),
         requestNumber: typeof item.request_number === "string" ? item.request_number : null,
@@ -188,7 +200,7 @@ export async function getMarginAnalytics(thresholdUsd: number) {
         currency: totals?.currency ?? "USD",
         wholesalePrice,
         costBasis,
-        pricingSource: pbdWholesale !== null ? "pbd" : "derived",
+        pricingSource: realSelling.source ?? "derived",
         updatedAt: typeof item.updated_at === "string" ? item.updated_at : null
       };
     });

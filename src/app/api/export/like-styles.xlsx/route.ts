@@ -1,19 +1,15 @@
 import * as XLSX from "xlsx";
-import { getCurrentRole, type UserRole } from "@/lib/auth/roles";
+import { canAccessHistoricalCostData, getCurrentRole } from "@/lib/auth/roles";
 import { buildLikeStylesExportRows, LIKE_STYLES_EXPORT_HEADERS, parseLikeStylesExportParams } from "@/lib/export/like-styles";
 import { findLikeStyles } from "@/lib/costing/history";
 
 export const dynamic = "force-dynamic";
 
-// Like-style comparison sets are for MD, Costing, and PBD (internal costing
-// decision aid) — the same roles as the search page/API.
-const ALLOWED_ROLES: UserRole[] = ["superadmin", "admin", "manager", "pbd", "costing", "md"];
-
 // GET /api/export/like-styles.xlsx
 // Exports the current Like Styles comparison set as a single-sheet workbook.
 export async function GET(request: Request) {
   const role = getCurrentRole();
-  if (!ALLOWED_ROLES.includes(role)) {
+  if (!canAccessHistoricalCostData(role)) {
     return new Response("Unauthorized", { status: 401 });
   }
 

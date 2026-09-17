@@ -13,7 +13,6 @@ const routeLabels: Record<string, string> = {
   finance: "Finance Metrics",
   history: "History",
   login: "Login",
-  "material-library": "Material Library",
   production: "Production",
   qa: "Pilot QA",
   requests: "Requests",

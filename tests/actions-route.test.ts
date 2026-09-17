@@ -64,6 +64,7 @@ function approveResponder(overrides: Partial<Responder> = {}): Responder {
       maybeSingle: () => ({ data: { id: "cbd-1", raw_payload: cbdPayload }, error: null })
     },
     historical_costings: {
+      maybeSingle: () => ({ data: null, error: null }),
       delete: () => ({ data: [], error: null }),
       insert: () => ({ data: [], error: null })
     },

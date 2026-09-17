@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, type ReactNode } from "react";
+import { useState, useCallback, useEffect, useRef, type ReactNode } from "react";
 import { IconAlert, IconCheck, IconX } from "./icons";
 
 type ConfirmConfig = {
@@ -97,6 +97,51 @@ export function ConfirmDialog({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  const confirmRef = useRef<HTMLButtonElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const previousActiveElement = useRef<Element | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+
+    previousActiveElement.current = document.activeElement;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onCancel();
+        return;
+      }
+      if (e.key === "Tab") {
+        const focusable = [cancelRef.current, confirmRef.current].filter(Boolean);
+        if (focusable.length === 0) return;
+        const first = focusable[0] as HTMLElement;
+        const last = focusable[focusable.length - 1] as HTMLElement;
+        if (e.shiftKey) {
+          if (document.activeElement === first) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else {
+          if (document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
+          }
+        }
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    cancelRef.current?.focus();
+
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      if (previousActiveElement.current instanceof HTMLElement) {
+        previousActiveElement.current.focus();
+      }
+    };
+  }, [open, onCancel]);
+
   if (!open) return null;
 
   const cfg = variantConfig[variant];
@@ -121,13 +166,14 @@ export function ConfirmDialog({
         <p id="confirm-message" className="confirm-message">{message}</p>
         <div className="confirm-actions">
           <button
+            ref={cancelRef}
             className="button secondary"
             onClick={onCancel}
-            autoFocus
           >
             {cancelLabel}
           </button>
           <button
+            ref={confirmRef}
             className={`button ${cfg.buttonClass}`}
             onClick={onConfirm}
           >

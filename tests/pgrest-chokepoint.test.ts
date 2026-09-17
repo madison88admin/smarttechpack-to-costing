@@ -33,7 +33,18 @@ const SCAN_DIRS = ["src/lib", "src/app/api"];
 //   knownStatus        — whitelist-checked against phaseOneStatuses (the
 //                        canonical status.ts vocabulary) in the same function
 //   allowedStatuses    — derived from the role-visibility status constants
-const ALLOWED_BARE = new Set(["id", "requestId", "fromStatus", "toStatus", "knownStatus", "allowedStatuses"]);
+//   sendableChannelNames — notification_queue channel names built from
+//                        transport env flags (sendableChannels()); a fixed
+//                        internal vocabulary that no request can influence
+const ALLOWED_BARE = new Set([
+  "id",
+  "requestId",
+  "fromStatus",
+  "toStatus",
+  "knownStatus",
+  "allowedStatuses",
+  "sendableChannelNames"
+]);
 
 // Member-expression roots that are provably DB-derived (query results) or
 // validated UUID params, so `.id` / `_id` members on them are safe.

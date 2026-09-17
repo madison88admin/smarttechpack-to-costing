@@ -40,7 +40,7 @@ function uatResponder(status: string, extra: Record<string, unknown> = {}) {
         ? { data: { id: "cbd-1", submitted_at: "2026-08-10T00:00:00Z", raw_payload: { grandTotal: 10, currency: "USD", yarnType: "Cotton", knitType: "Jersey", machineType: "Flat", knittingTime: 0.4 }, cbd_material_lines: [{ consumption: 0.2, total_cost: 10, currency: "USD", material_name: "Yarn" }] }, error: null }
         : { data: { id: "cbd-1", raw_payload: { grandTotal: 10, currency: "USD" } }, error: null },
     },
-    historical_costings: { select: () => ({ data: [], error: null }), delete: () => ({ data: [], error: null }), insert: () => ({ data: [], error: null }) },
+    historical_costings: { select: () => ({ data: [], error: null }), maybeSingle: () => ({ data: null, error: null }), delete: () => ({ data: [], error: null }), insert: () => ({ data: [], error: null }) },
     workflow_events: { insert: () => ({ data: [], error: null }) },
     workflow_settings: { single: () => ({ data: { key: "manager_approval_threshold", value: "15" }, error: null }) },
     validation_checklist_items: { select: () => ({ data: [], error: null }) },
@@ -162,7 +162,7 @@ describe("UAT — PBD approver (main user)", () => {
           ? { data: { id: "cbd-1", submitted_at: "2026-08-10T00:00:00Z", raw_payload: { grandTotal: 10, currency: "USD", yarnType: "100% Acrylic", knitType: "Jacquard", machineType: "7G", knittingTime: 0.45 }, cbd_material_lines: [{ consumption: 0.2, total_cost: 13, currency: "USD", material_name: "Yarn" }] }, error: null }
           : { data: { id: "cbd-1", raw_payload: { grandTotal: 10, currency: "USD" } }, error: null },
       },
-      historical_costings: { select: () => ({ data: hist, error: null }), delete: () => ({ data: [], error: null }), insert: () => ({ data: [], error: null }) },
+      historical_costings: { select: () => ({ data: hist, error: null }), maybeSingle: () => ({ data: null, error: null }), delete: () => ({ data: [], error: null }), insert: () => ({ data: [], error: null }) },
       approval_actions: {
         maybeSingle: (chain: { eq?: [string, unknown][] }) => {
           const isAck = chain.eq?.some(([c, v]) => c === "action" && v === "outlier_acknowledged");

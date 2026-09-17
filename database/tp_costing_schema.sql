@@ -61,7 +61,12 @@ alter table if exists tp_costing.costing_requests
   add column if not exists mpo_number text,
   add column if not exists product_category text,
   add column if not exists buyer_style_number text,
-  add column if not exists notes text;
+  add column if not exists notes text,
+  -- Cost Sheet Ready flag — set by Costing/Admin after approval (per-request
+  -- endpoint and bulk action), read by the production view and request page.
+  add column if not exists cost_sheet_ready boolean not null default false,
+  add column if not exists cost_sheet_ready_at timestamptz,
+  add column if not exists cost_sheet_ready_by text;
 
 create table if not exists tp_costing.user_profiles (
   id uuid primary key default gen_random_uuid(),
@@ -250,7 +255,11 @@ alter table if exists tp_costing.historical_costings
   add column if not exists knitting_time numeric,
   add column if not exists brand text,
   add column if not exists customer text,
-  add column if not exists season text;
+  add column if not exists season text,
+  -- Migration 018: landed cost + real selling price, so the Like Styles machine
+  -- table can average what a machine costs and earns per matched style.
+  add column if not exists landed_cost numeric,
+  add column if not exists selling_price numeric;
 
 create unique index if not exists historical_costings_request_unique
   on tp_costing.historical_costings(costing_request_id)
@@ -259,6 +268,32 @@ create unique index if not exists historical_costings_request_unique
 create unique index if not exists costing_requests_active_style_factory_season_unique
   on tp_costing.costing_requests(product_id, lower(coalesce(factory_name, '')), lower(coalesce(season, '')))
   where status not in ('approved', 'rejected');
+
+-- A costing note can be written about a historical style (costing_notes is
+-- created above, before this table exists, so the key is added here). The notes
+-- search embeds those style attributes — yarn/knit/machine — and PostgREST only
+-- resolves an embed through a real foreign key; without it the whole select is
+-- rejected and the search 500s. NOT VALID so a database that already carries
+-- orphan ids is not blocked.
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint c
+    join pg_class t on t.oid = c.conrelid
+    join pg_namespace n on n.oid = t.relnamespace
+    where n.nspname = 'tp_costing'
+      and t.relname = 'costing_notes'
+      and c.contype = 'f'
+      and c.conkey = array[
+        (select a.attnum from pg_attribute a where a.attrelid = t.oid and a.attname = 'historical_costing_id')
+      ]
+  ) then
+    alter table tp_costing.costing_notes
+      add constraint costing_notes_historical_costing_id_fkey
+      foreign key (historical_costing_id) references tp_costing.historical_costings(id) on delete set null not valid;
+  end if;
+end $$;
 
 -- Comparative style review tracking (BR-005)
 create table if not exists tp_costing.style_comparisons (
@@ -484,6 +519,53 @@ create table if not exists tp_costing.notification_reads (
 alter table tp_costing.notification_reads enable row level security;
 revoke all on table tp_costing.notification_reads from anon, authenticated;
 grant all on table tp_costing.notification_reads to service_role;
+
+-- Structured per-field change requests (migration 016)
+create table if not exists tp_costing.cbd_change_requests (
+  id uuid primary key default gen_random_uuid(),
+  costing_request_id uuid not null references tp_costing.costing_requests(id) on delete cascade,
+  cbd_section text not null default '',
+  field_key text not null default '',
+  field_label text not null default '',
+  current_value text not null default '',
+  requested_value text not null default '',
+  reason text not null default '',
+  priority text not null default 'normal',
+  due_date date,
+  status text not null default 'open',
+  requested_by_role text,
+  requested_by_name text,
+  resolved_cbd_id uuid references tp_costing.factory_cbds(id) on delete set null,
+  created_at timestamptz not null default now(),
+  resolved_at timestamptz
+);
+
+create index if not exists cbd_change_requests_request_idx
+  on tp_costing.cbd_change_requests(costing_request_id, status, created_at desc);
+
+alter table tp_costing.cbd_change_requests enable row level security;
+revoke all on table tp_costing.cbd_change_requests from anon, authenticated;
+grant all on table tp_costing.cbd_change_requests to service_role;
+
+-- Factory CBD photos. The storage object is the file, this row is the record;
+-- uploaded_by holds the display name of the uploader.
+create table if not exists tp_costing.cbd_photos (
+  id uuid primary key default gen_random_uuid(),
+  costing_request_id uuid not null references tp_costing.costing_requests(id) on delete cascade,
+  file_name text not null,
+  file_path text not null,
+  file_size bigint,
+  content_type text,
+  uploaded_by text,
+  uploaded_at timestamptz not null default now()
+);
+
+create index if not exists cbd_photos_request_idx
+  on tp_costing.cbd_photos(costing_request_id, uploaded_at);
+
+alter table tp_costing.cbd_photos enable row level security;
+revoke all on table tp_costing.cbd_photos from anon, authenticated;
+grant all on table tp_costing.cbd_photos to service_role;
 
 -- NextGen-synced historical records are flagged with source = 'nextgen' so
 -- re-syncs can dedup and benchmarks can exclude dropped/archived products.

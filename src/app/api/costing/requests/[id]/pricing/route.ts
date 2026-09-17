@@ -3,7 +3,7 @@ import { canRunPbdAction, getCurrentRole, getCurrentUserId, getCurrentUserName }
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { recordWorkflowEvent } from "@/lib/workflow/events";
 import { validateRequestId } from "@/lib/api/validate";
-import { enqueueCostingChangeAlert, pbdPricingAlertBody } from "@/lib/notifications/workflow-alerts";
+import { enqueueChangeAlert, pbdPricingAlertBody } from "@/lib/notifications/workflow-alerts";
 
 function optionalNumber(value: unknown) {
   if (value === null || value === undefined || value === "") return null;
@@ -124,7 +124,8 @@ export async function POST(request: Request, context: { params: { id: string } }
     wholesaleBefore: prevNumber(prevPricing.wholesalePrice),
     retailBefore: prevNumber(prevPricing.retailPrice)
   });
-  await enqueueCostingChangeAlert({
+  await enqueueChangeAlert({
+    recipientRole: "costing",
     requestId: context.params.id,
     requestNumber,
     factoryName,

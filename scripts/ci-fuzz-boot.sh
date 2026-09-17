@@ -32,10 +32,12 @@ trap cleanup EXIT
 
 log() { echo "[boot] $*"; }
 
-log "== 1/6 database roles =="
+log "== 1/6 database roles and extensions =="
 psql "$DB_URL" -v ON_ERROR_STOP=1 -q <<SQL
-create role anon nologin;
+create role anon nologin;  -- Supabase's role trio; the schema's RLS statements revoke from anon/authenticated
+create role authenticated nologin;
 create role service_role nologin bypassrls;
+create extension if not exists vector;  -- schema declares vector(1536); production Supabase ships pgvector
 SQL
 
 log "== 2/6 schema + migrations =="
@@ -68,7 +70,7 @@ log "  PostgREST up on :${PGREST_PORT}"
 
 log "== 4/6 /rest/v1 proxy + service-role JWT =="
 SERVICE_JWT="$(cd "$ROOT" && node --input-type=module -e \
-  "import {mintToken} from './scripts/fuzz-http.mjs'; console.log(mintToken('${JWT_SECRET}', 'service_role'))")"
+  "import {mintJwt} from './scripts/fuzz-http.mjs'; console.log(mintJwt('${JWT_SECRET}', 'service_role'))")"
 POSTGREST_UPSTREAM="http://127.0.0.1:${PGREST_PORT}" PORT="${PROXY_PORT}" node "$ROOT/scripts/ci-rest-proxy.mjs" > /tmp/tp-fuzz-proxy.log 2>&1 &
 PIDS+=($!)
 sleep 1
@@ -96,7 +98,17 @@ for _ in $(seq 1 90); do
   sleep 1
 done
 curl -sf -o /dev/null "${APP_URL}/api/health" || {
-  echo "[boot] app failed to start — log tail:"; tail -50 /tmp/tp-fuzz-app.log; exit 1;
+  # The health route reports which dependency is down; print the body plus a
+  # direct PostgREST read with the same service JWT, so a boot failure says
+  # whether it is the app, the proxy, the JWT, or a missing grant.
+  echo "[boot] health is not ok — body:"
+  curl -s "${APP_URL}/api/health"; echo
+  echo "[boot] direct PostgREST read with the service JWT:"
+  curl -s -w "\n  http_status=%{http_code}\n" -H "Authorization: Bearer ${SERVICE_JWT}" \
+    "http://127.0.0.1:${PGREST_PORT}/costing_requests?select=id&limit=1" | head -c 500
+  echo "[boot] PostgREST log tail:"; tail -20 /tmp/tp-fuzz-postgrest.log
+  echo "[boot] app log tail:"; tail -30 /tmp/tp-fuzz-app.log
+  exit 1
 }
 log "  app up on ${APP_URL}"
 
@@ -106,4 +118,10 @@ cd "$ROOT"
 # on a failed upstream login, which would 500 the proxy routes regardless of
 # the param. The DB-backed surface (the regression class this replay guards) is
 # fully probed; upstream proxies are fuzzed where NextGen is reachable instead.
-node scripts/fuzz-http.mjs --roles pbd,admin --secret "${SESSION_SECRET}" --base "${APP_URL}" --concurrency 4 --skip-upstream
+node scripts/fuzz-http.mjs --roles pbd,admin --secret "${SESSION_SECRET}" --base "${APP_URL}" --concurrency 4 --skip-upstream || {
+  # The harness only reports status codes; the server log has the stack that
+  # says why a route 500s on a freshly-built database.
+  echo "[boot] harness failed — app log tail:"
+  tail -60 /tmp/tp-fuzz-app.log
+  exit 1
+}

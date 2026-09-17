@@ -17,9 +17,38 @@ APP_ROOT="/opt/smart-tp-costing/app"
 NGINX_CONF="/etc/nginx/sites-available/smart-tp-costing"
 NGINX_ENABLED="/etc/nginx/sites-enabled/smart-tp-costing"
 
+# --- Step 0: Normalize the deploy scripts ---
+# A Windows checkout ships these files as CRLF and without the execute bit, and
+# cron calls three of them directly. A missing +x does not look like an error —
+# cron just writes "/bin/sh: Permission denied" into the log on every run, so the
+# job looks scheduled while never doing anything. Repair both here, which makes
+# this script the one place that guarantees the schedule survives a fresh copy of
+# the app onto the VPS.
+echo "▸ Step 0: Normalizing deploy scripts (line endings + execute bit)..."
+if [ -d "$APP_ROOT/deploy" ]; then
+    CRLF=$(grep -rl "$(printf '\r')" "$APP_ROOT"/deploy/*.sh 2>/dev/null | wc -l | tr -d ' ')
+    sed -i 's/\r$//' "$APP_ROOT"/deploy/*.sh 2>/dev/null || true
+    chmod +x "$APP_ROOT"/deploy/*.sh 2>/dev/null || true
+    echo "  ✅ deploy/*.sh normalized ($CRLF file(s) had CRLF, all now executable)"
+else
+    echo "  ⚠️  No deploy directory at $APP_ROOT/deploy"
+fi
+echo ""
+
 # --- Step 1: Install nginx config ---
+# Only when there is none. The live file was rewritten by certbot and carries the
+# 443/SSL block, so copying this repo copy over it would drop HTTPS and point the
+# proxy at a dead port — an outage that `nginx -t` cannot catch. Re-install
+# deliberately with FORCE_NGINX=1.
 echo "▸ Step 1: Configuring nginx reverse proxy..."
-if [ -f "$APP_ROOT/deploy/nginx-smart-tp-costing.conf" ]; then
+if [ -f "$NGINX_CONF" ] && [ "${FORCE_NGINX:-0}" != "1" ]; then
+    echo "  ⚠️  $NGINX_CONF already exists — leaving it untouched."
+    echo "      Check it proxies to the app port (3110), or re-install with: FORCE_NGINX=1 bash $0"
+elif [ -f "$APP_ROOT/deploy/nginx-smart-tp-costing.conf" ]; then
+    if [ -f "$NGINX_CONF" ]; then
+        cp -p "$NGINX_CONF" "$NGINX_CONF.bak-$(date -u +%Y%m%dT%H%M%SZ)"
+        echo "  Backed up the existing config first."
+    fi
     cp "$APP_ROOT/deploy/nginx-smart-tp-costing.conf" "$NGINX_CONF"
     
     # Enable the site (remove default if blocking)
@@ -61,7 +90,7 @@ echo ""
 echo "▸ Step 3: Verifying application health..."
 sleep 3
 
-HEALTH=$(curl -s --fail --max-time 10 http://127.0.0.1:3001/api/health 2>/dev/null || echo '{"status":"error"}')
+HEALTH=$(curl -s --fail --max-time 10 http://127.0.0.1:3110/api/health 2>/dev/null || echo '{"status":"error"}')
 if echo "$HEALTH" | grep -q '"status":"ok"'; then
     echo "  ✅ App health: $HEALTH"
 else
@@ -98,11 +127,11 @@ echo "════════════════════════�
 echo "  DEPLOYMENT COMPLETE"
 echo "═══════════════════════════════════════════════════════════"
 echo ""
-echo "  ✅ Nginx configured (port 80 → 3001)"
+echo "  ✅ Nginx configured (port 80/443 → 3110)"
 echo "  ✅ Migrations applied"
 echo ""
 echo "  Access the app at:"
-echo "  → http://5.223.78.194/"
+echo "  → https://smart-tp-costing.5-223-78-194.sslip.io/"
 echo "  → https://madison88.online/ (after DNS setup)"
 echo "  → https://smarttp.madison88.online/ (after DNS setup)"
 echo ""

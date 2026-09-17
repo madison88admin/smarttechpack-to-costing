@@ -1,5 +1,5 @@
 import { badRequest, upstreamJson } from "@/lib/api/response";
-import { legacyKendoSearchPayload, nextGenPost } from "@/lib/nextgen/client";
+import { legacyKendoSearchPayload, safeNextGenPost } from "@/lib/nextgen/client";
 import { normalizeProductSearch } from "@/lib/nextgen/normalize";
 import { getCurrentRole } from "@/lib/auth/roles";
 
@@ -12,7 +12,7 @@ export async function GET(request: Request) {
 
   if (!q) return badRequest("Missing q query parameter");
 
-  const result = await nextGenPost(
+  const result = await safeNextGenPost(
     "productSearch",
     legacyKendoSearchPayload(q, "Name")
   );

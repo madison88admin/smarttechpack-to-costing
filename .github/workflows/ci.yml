@@ -20,6 +20,15 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm audit --omit=dev --audit-level=high
+      # Ops scripts run only on the VPS, where a syntax error is discovered at
+      # 02:00 by a cron job that silently fails. Parse them here instead. The
+      # backup script's behavior is covered by tests/backup-script.test.ts.
+      - name: Syntax-check deploy and ops scripts
+        run: |
+          for script in deploy/*.sh scripts/*.sh; do
+            echo "sh -n $script"
+            sh -n "$script"
+          done
       # The full gate: lint -> typecheck -> tests -> production build.
       # Mirrors the local `npm run verify` contract exactly.
       - run: npm run verify
@@ -41,12 +50,15 @@ jobs:
   # scripts/ci-fuzz-boot.sh stands up the stack: Postgres service below,
   # PostgREST binary (runner-side), a /rest/v1 prefix proxy, the app dev
   # server, then runs the harness as unauthenticated + pbd + admin.
+  # The image must be pgvector-enabled: the schema declares
+  # `historical_costings.embedding vector(1536)` and production runs Supabase
+  # (pgvector available), so plain postgres fails the schema load.
   fuzz-live:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     services:
       postgres:
-        image: postgres:16
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres

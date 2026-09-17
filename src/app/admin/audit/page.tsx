@@ -83,12 +83,14 @@ export default async function AdminAuditPage({
           <option value="all">All event types</option>
           <option value="factory_submit">Factory Submit</option>
           <option value="costing_complete">Costing Complete</option>
-          <option value="pbd_approve">PBD Approve</option>
-          <option value="pbd_reject">PBD Reject</option>
+          <option value="approve">PBD Approve</option>
+          <option value="reject">PBD Reject</option>
           <option value="send_to_factory">Send to Factory</option>
-          <option value="needs_clarification">Needs Clarification</option>
-          <option value="customer_status_change">Customer Status Change</option>
+          <option value="clarify">Clarification Requested</option>
+          <option value="md_review">MD Review</option>
+          <option value="customer_status_changed">Customer Status Change</option>
           <option value="escalation">Escalation</option>
+          <option value="reminder">Reminder</option>
           <option value="nextgen_backfill">NextGen Backfill</option>
         </select>
         <button className="button" type="submit">
@@ -115,6 +117,7 @@ export default async function AdminAuditPage({
                   <th>Time</th>
                   <th>Event</th>
                   <th>Actor</th>
+                  <th>What changed</th>
                   <th>Notification</th>
                   <th>Request</th>
                 </tr>
@@ -124,7 +127,8 @@ export default async function AdminAuditPage({
                   <tr key={event.id}>
                     <td>{new Date(event.created_at).toLocaleString()}</td>
                     <td><strong>{formatLabel(event.event_type)}</strong></td>
-                    <td>{event.actor_role?.toUpperCase() ?? "System"}</td>
+                    <td><strong>{event.actor_role?.toUpperCase() ?? "SYSTEM"}</strong><br /><span className="eyebrow">{event.actor_user_id ?? "Automated process"}</span></td>
+                    <td><AuditDetails payload={event.payload} /></td>
                     <td>{event.notification_status}</td>
                     <td>
                       {event.costing_request_id ? (
@@ -161,6 +165,21 @@ export default async function AdminAuditPage({
         )}
       </section>
     </AppShell>
+  );
+}
+
+function AuditDetails({ payload }: { payload: Record<string, unknown> | null }) {
+  if (!payload || Object.keys(payload).length === 0) return <span className="eyebrow">No field details</span>;
+  const changes = Array.isArray(payload.changes) ? payload.changes : null;
+  const entries = changes ?? Object.entries(payload).filter(([key]) => !["fromStatus", "toStatus"].includes(key));
+  return (
+    <details className="audit-details">
+      <summary>{changes ? `${changes.length} field change${changes.length === 1 ? "" : "s"}` : "View details"}</summary>
+      <div className="audit-details-body">
+        {changes ? changes.map((change, index) => <div key={index}>{typeof change === "string" ? change : JSON.stringify(change)}</div>) : entries.map(([key, value]) => <div key={key}><strong>{key}:</strong> {typeof value === "object" ? JSON.stringify(value) : String(value)}</div>)}
+        {payload.fromStatus || payload.toStatus ? <div><strong>Status:</strong> {String(payload.fromStatus ?? "—")} → {String(payload.toStatus ?? "—")}</div> : null}
+      </div>
+    </details>
   );
 }
 
