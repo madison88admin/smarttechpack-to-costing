@@ -45,6 +45,15 @@ vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServiceClient: () => mocks.client
 }));
 
+// Creating a request back-fills NextGen pricing best-effort. Left real, this
+// suite logged into the live ERP on every run — and none of the lifecycle
+// assertions look at pricing, so the ERP was contributing nothing but risk.
+// Only the fetch is replaced; the pricing helpers stay real.
+vi.mock("@/lib/costing/nextgen-pricing", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/lib/costing/nextgen-pricing")>()),
+  fetchNextGenPricingSnapshot: async () => null
+}));
+
 afterEach(() => {
   mocks.client = null;
   session.token = null;

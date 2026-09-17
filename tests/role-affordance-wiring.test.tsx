@@ -56,6 +56,15 @@ vi.mock("@/lib/costing/master-benchmark", () => ({
   flagCbdAgainstMasterBenchmark: async () => ({ flags: [], benchmark: [], error: null })
 }));
 
+// The queue page reads the ERP filter directory on every render. Left unmocked it
+// reached the live NextGen: the render then took as long as the upstream did (the
+// single attempt alone allows 8s, past the default 5s timeout), and because the
+// reader swallows upstream errors the test passed whenever the ERP answered fast.
+vi.mock("@/lib/nextgen/filter-options", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/lib/nextgen/filter-options")>()),
+  tryGetNextGenFilterOptions: async () => ({ brands: [], customers: [], seasons: [] })
+}));
+
 import RequestsPage from "../src/app/requests/page";
 import RequestDetailPage from "../src/app/requests/[id]/page";
 

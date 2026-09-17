@@ -132,7 +132,10 @@ afterEach(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-describe("driver guard", () => {
+// Every case here spawns a child process and waits for its cleanup to settle; the
+// slowest already takes ~3s, so the 5s default made a busy machine look like a
+// broken guard.
+describe("driver guard", { timeout: 20_000 }, () => {
   it("refuses to start while a previous run's rows still exist", async () => {
     rows = [{ id: "old-1", request_number: "CR-OLD-1", status: "draft", factory_name: "STUB FACTORY", created_at: "2026-09-15T00:00:00Z", notes: "MARKER-1 an-earlier-run" }];
 
