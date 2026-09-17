@@ -34,7 +34,8 @@ log() { echo "[boot] $*"; }
 
 log "== 1/6 database roles and extensions =="
 psql "$DB_URL" -v ON_ERROR_STOP=1 -q <<SQL
-create role anon nologin;
+create role anon nologin;  -- Supabase's role trio; the schema's RLS statements revoke from anon/authenticated
+create role authenticated nologin;
 create role service_role nologin bypassrls;
 create extension if not exists vector;  -- schema declares vector(1536); production Supabase ships pgvector
 SQL
