@@ -52,3 +52,4 @@ apply_migration 017 017_retire_manager_recipients.sql
 apply_migration 018 018_historical_machine_cost.sql
 apply_migration 019 019_active_request_unique_index.sql
 apply_migration 020 020_nextgen_filter_option_snapshot.sql
+apply_migration 021 021_reconcile_cost_sheet_ready_and_photos.sql
