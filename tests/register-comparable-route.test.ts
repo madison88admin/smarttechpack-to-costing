@@ -14,10 +14,13 @@ const { mocks } = vi.hoisted(() => ({
   }
 }));
 
-vi.mock("@/lib/auth/roles", () => ({
-  getCurrentRole: () => mocks.role,
-  canRunCostingAction: (role: string) => role === "costing" || role === "admin",
-  canRunPbdAction: (role: string) => role === "pbd" || role === "admin"
+// Only the session is injected; every predicate comes from the real module, so
+// this mock cannot drift from the rule the route reads (it used to hand-roll
+// canRunCostingAction/canRunPbdAction and broke the day the route switched to
+// canDownloadCostingReports).
+vi.mock("@/lib/auth/roles", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/lib/auth/roles")>()),
+  getCurrentRole: () => mocks.role
 }));
 
 vi.mock("@/lib/reporting", () => ({

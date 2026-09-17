@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import React from "react";
+import { offers, survey } from "./helpers/element-survey";
 import { createMockSupabase } from "./helpers/supabase-mock";
 import { issueSessionToken } from "./helpers/session";
 import type { UserRole } from "../src/lib/auth/roles";
@@ -80,46 +80,6 @@ const REQUEST = {
   factory_cbds: [{ id: "cbd-1", raw_payload: {}, cbd_material_lines: [], submitted_at: "2026-01-01T00:00:00.000Z" }]
 };
 
-/**
- * Every href in the tree, every rendered string, and every element. The walk
- * follows `children` and every other prop that carries elements, because a pane
- * can be passed as a prop (`tabs={[{ label, content }]}`) rather than nested —
- * a children-only walk would miss the request detail page's own panes.
- */
-function survey(tree: unknown) {
-  const hrefs: string[] = [];
-  const texts: string[] = [];
-  const elements: React.ReactElement[] = [];
-
-  const visit = (node: unknown, isRenderedText: boolean) => {
-    if (Array.isArray(node)) {
-      node.forEach((child) => visit(child, isRenderedText));
-      return;
-    }
-    if (typeof node === "string" || typeof node === "number") {
-      if (isRenderedText) texts.push(String(node));
-      return;
-    }
-    if (React.isValidElement(node)) {
-      elements.push(node);
-      const props = (node.props ?? {}) as Record<string, unknown>;
-      if (typeof props.href === "string") hrefs.push(props.href);
-      for (const [key, value] of Object.entries(props)) visit(value, key === "children");
-      return;
-    }
-    if (node && typeof node === "object") {
-      Object.values(node as Record<string, unknown>).forEach((value) => visit(value, false));
-    }
-  };
-  visit(tree, true);
-
-  return {
-    hrefs,
-    text: texts.join(" "),
-    find: (type: unknown) => elements.filter((element) => element.type === type)
-  };
-}
-
 async function renderAs<T>(role: UserRole, render: () => Promise<T>) {
   mocks.token = await issueSessionToken(role);
   mocks.client = createMockSupabase({
@@ -134,7 +94,6 @@ async function renderAs<T>(role: UserRole, render: () => Promise<T>) {
 
 // The CSV href carries the current filters, so match on the endpoint path.
 const QUEUE_EXPORTS = ["/api/export/requests.csv", "/api/export/cbd-detail.csv"];
-const offers = (hrefs: string[], path: string) => hrefs.some((href) => href.startsWith(path));
 
 /** Renders the queue page for one role with a real signed session. */
 async function renderQueueAs(role: UserRole) {
