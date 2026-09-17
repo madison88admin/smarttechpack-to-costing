@@ -1,10 +1,7 @@
-import { readFileSync as fsReadFileSync } from "node:fs";
-// Load .env.local so integration-style tests (save/list/delete curated rows,
-// getMasterBenchmark) can talk to the real Supabase service client.
-for (const line of fsReadFileSync(".env.local", "utf8").split(/\r?\n/)) {
-  const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
-  if (m) process.env[m[1]] = m[2].replace(/^["']|["']$/g, "").trim();
-}
+import { liveUpstreamEnabled, loadLocalEnv, liveSkipNote } from "./helpers/live-upstream";
+// The curated-persistence block below writes real rows, so it needs the service
+// client's credentials; the rest of this file is pure and needs none.
+loadLocalEnv();
 
 import { afterAll, describe, expect, it } from "vitest";
 import {
@@ -206,7 +203,9 @@ import {
   type CuratedBenchmarkRow
 } from "../src/lib/costing/master-benchmark";
 
-describe("curated benchmark persistence", () => {
+// Live: saves, upserts and deletes rows through the real service client. Opt-in
+// (`TP_E2E_ALLOW_LIVE_DB=1`) so `npm test` never writes to production.
+describe.skipIf(!liveUpstreamEnabled())(`curated benchmark persistence (${liveSkipNote()})`, () => {
   const created: string[] = [];
 
   afterAll(async () => {

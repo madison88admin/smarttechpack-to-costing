@@ -17,6 +17,14 @@ vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServiceClient: () => mocks.client
 }));
 
+// /api/health/nextgen probes the ERP by design. Stub the session so the route's
+// contract is what gets asserted instead of the internet's availability.
+vi.mock("@/lib/nextgen/session", () => ({
+  getNextGenSessionCookie: async () => "session-cookie",
+  invalidateNextGenSession: () => {},
+  isNextGenSessionCached: () => false
+}));
+
 function baseResponder(): Responder {
   return {
     costing_requests: {
@@ -86,6 +94,8 @@ beforeEach(async () => {
 afterEach(() => {
   session.token = null;
   mocks.client = null;
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
 });
 
 describe("Missing admin/export route coverage", () => {
@@ -104,11 +114,38 @@ describe("Missing admin/export route coverage", () => {
     expect(result.status).toBe(405);
   });
 
-  it("GET /api/health/nextgen reports status", async () => {
+  // Was: probe the live ERP and accept 200, 502 or 503 — a status the route
+  // returns either way, so it proved only that something came back, while
+  // making the suite depend on the upstream host. Assert the two contracts the
+  // route actually owns, with the ERP stubbed.
+  it("GET /api/health/nextgen reports a healthy upstream as 200", async () => {
+    vi.stubEnv("NEXTGEN_BASE_URL", "https://erp.test");
+    vi.stubEnv("NEXTGEN_USERNAME", "user");
+    vi.stubEnv("NEXTGEN_PASSWORD", "secret");
+    vi.stubGlobal("fetch", async () => new Response("", { status: 200 }));
     mocks.client = createMockSupabase(baseResponder()).client;
     const { GET } = await import("../src/app/api/health/nextgen/route");
     const response = await GET(new Request("http://localhost/api/health/nextgen"));
-    expect([200, 502, 503]).toContain(response.status);
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.checks.configuration.status).toBe("ok");
+    expect(body.checks.reachable.status).toBe("ok");
+    expect(body.checks.login.status).toBe("ok");
+  });
+
+  it("GET /api/health/nextgen reports missing configuration without calling out", async () => {
+    vi.stubEnv("NEXTGEN_BASE_URL", "");
+    vi.stubEnv("NEXTGEN_USERNAME", "");
+    vi.stubEnv("NEXTGEN_PASSWORD", "");
+    mocks.client = createMockSupabase(baseResponder()).client;
+    const { GET } = await import("../src/app/api/health/nextgen/route");
+    const response = await GET(new Request("http://localhost/api/health/nextgen"));
+    const body = await response.json();
+    expect(response.status).toBe(503);
+    expect(body.checks.configuration.detail).toContain("NEXTGEN_BASE_URL");
+    expect(body.checks.reachable.status).toBe("skipped");
+    expect(body.checks.login.status).toBe("skipped");
   });
 
   it("GET /api/historical/search returns results", async () => {

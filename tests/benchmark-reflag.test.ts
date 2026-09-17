@@ -1,9 +1,6 @@
-import { readFileSync as fsReadFileSync } from "node:fs";
-// Load .env.local for the history integration check (real Supabase).
-for (const line of fsReadFileSync(".env.local", "utf8").split(/\r?\n/)) {
-  const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
-  if (m) process.env[m[1]] = m[2].replace(/^["']|["']$/g, "").trim();
-}
+import { liveUpstreamEnabled, loadLocalEnv, liveSkipNote } from "./helpers/live-upstream";
+// Only the history integration block below talks to Supabase.
+loadLocalEnv();
 
 import { describe, expect, it } from "vitest";
 import {
@@ -77,7 +74,8 @@ describe("findAffectedLines", () => {
 // Integration: price history recording + previous-values return. The history
 // table ships in migration 008; until it is applied, recording degrades
 // gracefully (save still succeeds, history is skipped).
-describe("benchmark price history (integration)", () => {
+// Live: writes real curated rows. Opt-in (`TP_E2E_ALLOW_LIVE_DB=1`).
+describe.skipIf(!liveUpstreamEnabled())(`benchmark price history — ${liveSkipNote()}`, () => {
   const createdBenchmarks: string[] = [];
 
   async function cleanup() {
