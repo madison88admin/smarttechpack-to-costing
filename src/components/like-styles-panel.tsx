@@ -133,7 +133,7 @@ export function LikeStylesPanel({
               <br />
               {row.sampleSize != null ? (
                 <>
-                  <span className="eyebrow">Based on {row.sampleSize} historical costing{row.sampleSize === 1 ? "" : "s"}</span>
+                  <span className="eyebrow">Based on {row.sampleSize} distinct style{row.sampleSize === 1 ? "" : "s"}</span>
                   <br />
                 </>
               ) : null}

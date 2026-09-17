@@ -362,7 +362,7 @@ export type LikeStyleMatch = HistoricalCostingRow & {
   matchingNotes: Array<{ note_type: string; note: string; tags: string[] }>;
   /** Fraction of the maximum attainable score for this query (0–100). */
   scorePercent: number;
-  /** How many historical costings were evaluated (excludes the current request). */
+  /** How many distinct styles were evaluated (excludes the current request). */
   sampleSize: number;
   /** low / medium / high — driven by the score ratio and the sample size. */
   confidence: MatchConfidence;
@@ -543,15 +543,19 @@ export function scoreLikeStyles(
 ): LikeStyleMatch[] {
   const minScore = input.minScore ?? 0;
   const limit = input.limit ?? 10;
-  // Every match shares the same context: how many comparables were evaluated
-  // and the maximum score the query could possibly award. Confidence is
-  // derived from those, so a 5/8 row on a thin library reads "low" but the
+  // One comparable = one style. The register holds every ERP costing record of
+  // a style (a single import run brought 2.49 records per style), so counting
+  // rows here filled the requested slots with the same style at four different
+  // prices and let one style carry the machine-speed averages several times.
+  const evaluated = rows.filter((row) => row.costing_request_id !== input.excludeRequestId);
+  // Every match shares the same context: how many distinct comparables were
+  // evaluated and the maximum score the query could possibly award. Confidence
+  // is derived from those, so a 5/8 row on a thin library reads "low" but the
   // same 5/8 row on a rich library reads "medium".
-  const sampleSize = rows.filter((row) => row.costing_request_id !== input.excludeRequestId).length;
+  const sampleSize = countDistinctStyles(evaluated);
   const maxScore = likeStylesMaxScore(input);
 
-  return rows
-    .filter((row) => row.costing_request_id !== input.excludeRequestId)
+  const scored = evaluated
     .map((row) => {
       const matches = [
         ["Yarn", row.yarn_type, input.yarnType, LIKE_STYLE_WEIGHTS.yarn],
@@ -564,14 +568,14 @@ export function scoreLikeStyles(
         ["Customer", row.customer, input.customer, LIKE_STYLE_WEIGHTS.customer],
         ["Season", row.season, input.season, LIKE_STYLE_WEIGHTS.season]
       ] as const;
-      const scored = matches.map(([label, current, target, weight]) => ({
+      const attributeScores = matches.map(([label, current, target, weight]) => ({
         label,
         points: scoreAttribute(current, target, weight)
       }));
-      const matchReasons = scored
+      const matchReasons = attributeScores
         .filter((match) => match.points > 0)
         .map((match) => `${match.label} +${formatPoints(match.points)}`);
-      let matchScore = round2(scored.reduce((total, match) => total + match.points, 0));
+      let matchScore = round2(attributeScores.reduce((total, match) => total + match.points, 0));
       const matchingNotes = notesByRequest?.get(row.costing_request_id) ?? [];
       if (matchingNotes.length > 0) {
         matchScore += 2;
@@ -588,8 +592,34 @@ export function scoreLikeStyles(
       };
     })
     .filter((row) => row.matchScore > 0 && row.matchScore >= minScore)
-    .sort((a, b) => b.matchScore - a.matchScore)
-    .slice(0, limit);
+    .sort((a, b) => b.matchScore - a.matchScore);
+
+  // For each style keep the record that best answers this query — the pool is
+  // newest-first and sort() is stable, so equal scores keep the newest ERP
+  // record instead of an arbitrary one. Ties across styles keep score order, so
+  // the requested slots go to distinct styles rather than to one style's
+  // costing revisions.
+  const bestPerStyle = new Map<string, LikeStyleMatch>();
+  for (const match of scored) {
+    const key = likeStyleKey(match);
+    if (!bestPerStyle.has(key)) bestPerStyle.set(key, match);
+  }
+  return [...bestPerStyle.values()].slice(0, limit);
+}
+
+/**
+ * Identity a comparable is counted under: the style, whatever its ERP casing.
+ * Rows with no style number never collapse into each other, so an unlabelled
+ * record can still be its own comparable.
+ */
+function likeStyleKey(row: { id: string; style_number: string | null }): string {
+  const style = (row.style_number ?? "").trim().toUpperCase();
+  return style ? `style:${style}` : `row:${row.id}`;
+}
+
+/** How many distinct styles a pool of historical rows describes. */
+export function countDistinctStyles(rows: Array<{ id: string; style_number: string | null }>): number {
+  return new Set(rows.map(likeStyleKey)).size;
 }
 
 /** Rounds to 2 decimals so token-overlap scores stay tidy (1.2857… → 1.29). */
@@ -690,6 +720,9 @@ function costBasisFor(row: LikeStyleMatch): number | null {
  * over the styles that actually hold that figure, never over the whole bucket.
  */
 export function summarizeLikeStyleMatches(matches: LikeStyleMatch[]): LikeStylesSummary {
+  // `matches` already holds one row per style (see scoreLikeStyles), so every
+  // count here is a distinct-style count and one style can never be averaged in
+  // twice for carrying several ERP costing records.
   const consumptions = finiteNumbers(matches.map((row) => row.average_consumption));
   const knittingTimes = finiteNumbers(matches.map((row) => row.knitting_time));
 

@@ -126,7 +126,7 @@ export default async function ComparisonSetPage({ params }: { params: { token: s
                     <br />
                     {row.sampleSize != null ? (
                       <>
-                        <span className="eyebrow">Based on {Number(row.sampleSize)} historical costing{Number(row.sampleSize) === 1 ? "" : "s"}</span>
+                        <span className="eyebrow">Based on {Number(row.sampleSize)} distinct style{Number(row.sampleSize) === 1 ? "" : "s"}</span>
                         <br />
                       </>
                     ) : null}

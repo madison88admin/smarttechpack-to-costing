@@ -400,7 +400,7 @@ export function LikeStylesSearch() {
                 <th>Avg knitting time</th>
                 <th>Avg landed cost</th>
                 <th>Avg margin</th>
-                <th>Styles</th>
+                <th title="Distinct styles behind this machine's averages">Styles</th>
               </tr>
             </thead>
             <tbody>
@@ -525,7 +525,7 @@ export function LikeStylesSearch() {
               ) : null}
               {row.matchReasons.length ? <span className="eyebrow"> — {row.matchReasons.join(", ")}</span> : null}
               <br />
-              <span className="eyebrow">Based on {row.sampleSize} historical costing{row.sampleSize === 1 ? "" : "s"} · Factory / Brand / Customer / Season are weighted in the score</span>
+              <span className="eyebrow">Based on {row.sampleSize} distinct style{row.sampleSize === 1 ? "" : "s"} · Factory / Brand / Customer / Season are weighted in the score</span>
               <br />
               {row.factory_name ?? "Unassigned"} / {row.currency ?? "USD"} {row.total_cost?.toFixed(2) ?? "Pending"}
               {row.yarn_type || row.knit_type || row.machine_type ? (
