@@ -25,6 +25,16 @@
 # Emails admins when new values are actually populated; silent otherwise.
 0 4 * * * curl -s -X POST https://costing.madison88.com/api/admin/backfill-nextgen-times -H "x-cron-secret: $CRON_SECRET" -H "Content-Type: application/json" -d '{"enrichBom":true}' >> /var/log/tp-costing-cron.log 2>&1
 
+# === Database Backup ===
+# Daily pg_dump of the tp_costing app schema AND the Supabase auth identities,
+# with a row-count manifest per run. Restore needs both, and losing an approved
+# historical costing row is unrecoverable without a dump from before it went.
+# Prefer the installer (idempotent): bash deploy/install-backup-cron.sh
+# NB: the live VPS runs this at 18:15 UTC, not 02:00, writing to
+# /opt/smart-tp-costing/backup.log. Check `crontab -l | grep backup` before
+# trusting either number — the crontab is the only source of truth.
+0 2 * * * /opt/smart-tp-costing/app/deploy/backup-tp-costing.sh >> /var/log/tp-costing-backup.log 2>&1
+
 # === Health Check ===
 # Check API health every 5 minutes
 */5 * * * * curl -s -o /dev/null -w "%{http_code}" https://costing.madison88.com/api/health >> /var/log/tp-costing-health.log 2>&1

@@ -35,6 +35,13 @@ if ! grep -q '^CRON_SECRET=' "$NEW/deploy/.env.costing"; then
   set_env CRON_SECRET "$(openssl rand -hex 32)"
 fi
 
+# Migrate the new tree BEFORE the swap. If a migration fails, the running app is
+# left untouched and still consistent; migrating after the swap leaves the code
+# on the new version and the container on the old image — half deployed, which is
+# exactly what a failed migration did once.
+chmod 700 "$NEW/deploy/apply-migrations.sh"
+APP_ROOT="$NEW" "$NEW/deploy/apply-migrations.sh"
+
 mv "$CURRENT" "$PREVIOUS"
 mv "$NEW" "$CURRENT"
 
@@ -48,8 +55,6 @@ rollback() {
 trap rollback INT TERM HUP
 
 cd "$CURRENT/deploy"
-chmod 700 "$CURRENT/deploy/apply-migrations.sh"
-APP_ROOT="$CURRENT" "$CURRENT/deploy/apply-migrations.sh"
 if ! docker compose -f docker-compose.costing.yml up -d --build; then
   rollback
   exit 1
