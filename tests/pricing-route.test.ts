@@ -62,7 +62,9 @@ describe("GET /api/costing/requests/[id]/pricing — role visibility", () => {
     expect(body.ok).toBe(false);
   });
 
-  it.each(["pbd", "costing", "md", "admin", "superadmin", "manager"])(
+  // Manager is not a role any more (retired with its workflow stage), so it is
+  // deliberately absent from this list.
+  it.each(["pbd", "costing", "md", "admin", "superadmin"])(
     "allows %s to read pricing",
     async (role) => {
       const { status, body } = await call(role);
@@ -72,4 +74,25 @@ describe("GET /api/costing/requests/[id]/pricing — role visibility", () => {
       expect(body.data.pbd_pricing.wholesalePrice).toBe(8.5);
     }
   );
+
+  // PGRST116 is PostgREST's "no rows" answer to .single(). A caller holding a
+  // stale request id used to be told 500 (server broken) instead of 404.
+  it("answers 404, not 500, when the request does not exist", async () => {
+    session.token = await issueSessionToken("pbd");
+    mocks.client = createMockSupabase({
+      costing_requests: {
+        single: () => ({
+          data: null,
+          error: { code: "PGRST116", message: "JSON object requested, multiple (or no) rows returned" }
+        })
+      }
+    }).client;
+
+    const res = await GET(new Request(`http://localhost/api/costing/requests/${REQUEST_ID}/pricing`), {
+      params: { id: REQUEST_ID }
+    } as never);
+
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe("Request not found");
+  });
 });

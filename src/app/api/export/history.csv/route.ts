@@ -1,5 +1,10 @@
 import { csvResponse, toCsv } from "@/lib/export/csv";
-import { listHistoricalCostings, smvSourceStatus } from "@/lib/costing/history";
+import {
+  countHistoricalCostings,
+  HISTORICAL_READ_MAX_ROWS,
+  listHistoricalCostings,
+  smvSourceStatus
+} from "@/lib/costing/history";
 import { canAccessHistoricalCostData, getCurrentRole } from "@/lib/auth/roles";
 
 export async function GET(request: Request) {
@@ -8,14 +13,25 @@ export async function GET(request: Request) {
     return new Response("Forbidden", { status: 403 });
   }
   const url = new URL(request.url);
-  const query = url.searchParams.get("q") ?? "";
-  const rows = await listHistoricalCostings({
-    query,
+  const filters = {
+    query: url.searchParams.get("q") ?? "",
     factory: url.searchParams.get("factory") ?? "",
     brand: url.searchParams.get("brand") ?? "",
     customer: url.searchParams.get("customer") ?? "",
     season: url.searchParams.get("season") ?? ""
-  });
+  };
+  // The whole filtered register, sized by its own count rather than a fixed
+  // ceiling — an "Export CSV" that quietly stopped at 5,000 rows of a larger
+  // register would repeat the truncation this endpoint was fixed for. Above the
+  // safety ceiling the export refuses and says so, instead of shipping a prefix.
+  const total = await countHistoricalCostings(filters);
+  if (total > HISTORICAL_READ_MAX_ROWS) {
+    return new Response(
+      `This export covers ${total.toLocaleString()} rows, above the ${HISTORICAL_READ_MAX_ROWS.toLocaleString()}-row export limit. Narrow the filters and retry.`,
+      { status: 413 }
+    );
+  }
+  const rows = await listHistoricalCostings({ ...filters, maxRows: Math.max(total, 1) });
   const headers = [
     "style_number",
     "factory_name",
