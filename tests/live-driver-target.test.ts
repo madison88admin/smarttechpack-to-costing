@@ -1,29 +1,54 @@
 import { describe, it, expect, vi } from "vitest";
 import { spawn } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { DEFAULT_REST, LIVE_OPT_IN_ENV, UnsafeDriverTargetError, resolveRestTarget } from "../scripts/lib/rest-target.mjs";
 
 // A live driver writes and deletes real rows, so where it points is a decision
 // rather than an inheritance. These are unit-level exercises of that decision
-// plus two spawns of the real driver — none of them reach a database, which is
+// plus spawns of every real driver — none of them reach a database, which is
 // the point: a refusal must be provable without writing to production.
+//
+// Every driver is covered, not just the role matrix: one of them still holding
+// the production URL is the whole hazard this rule exists to remove.
 
 vi.setConfig({ testTimeout: 30_000 });
 
 const LIVE = "http://5.223.78.194:8000/rest/v1";
-const DRIVER = "scripts/e2e-role-matrix.mjs";
+/** A loopback target nothing can be listening on, so the guard stops at once. */
+const LOOPBACK_NO_SERVER = "http://127.0.0.1:1/rest/v1";
+const DRIVERS = [
+  "scripts/e2e-role-matrix.mjs",
+  "scripts/e2e-live.mjs",
+  "scripts/e2e-clarify-ls.mjs",
+  "scripts/e2e-final-m88.mjs",
+  "scripts/e2e-reject-clarify-deep.mjs",
+  "scripts/verify-lazy-pricing.mjs"
+];
+/** The role matrix is the driver with the run-id stamping contract below. */
+const ROLE_MATRIX = DRIVERS[0];
 
 type Spawned = { code: number | null; output: string };
 
-/** Runs the real driver with none of the developer's own driver settings. */
-function runDriver(env: Record<string, string>): Promise<Spawned> {
+/**
+ * Runs the real driver with none of the developer's own driver settings.
+ *
+ * `cwd` defaults to the repository, where the refusal must land without any
+ * `.env` file existing at all; the loopback case runs from a scratch directory
+ * with a throwaway key so the driver gets as far as the guard without depending
+ * on the machine it runs on.
+ */
+function runDriver(driver: string, env: Record<string, string>, options: { cwd?: string } = {}): Promise<Spawned> {
   const ambient = { ...process.env };
   delete ambient.TP_E2E_ALLOW_LIVE_DB;
   delete ambient.TP_E2E_ALLOW_LEFTOVERS;
+  delete ambient.TP_E2E_REST;
 
   return new Promise((done) => {
-    const child = spawn(process.execPath, [DRIVER], {
+    const child = spawn(process.execPath, [join(process.cwd(), driver)], {
       stdio: ["ignore", "pipe", "pipe"],
+      cwd: options.cwd,
       // The session secret only has to exist — the refusal has to land before
       // anything reads it, and continuous integration has no .env files at all.
       env: { ...ambient, TP_COSTING_SESSION_SECRET: "target-test-secret", ...env }
@@ -62,8 +87,8 @@ describe("driver database target", () => {
     expect(resolveRestTarget({ env: { TP_E2E_REST: LIVE, [LIVE_OPT_IN_ENV]: "1" } })).toEqual({ rest: LIVE, live: true });
   });
 
-  it("refuses the real driver before it can write, when the target is live and unacknowledged", async () => {
-    const result = await runDriver({ TP_E2E_REST: LIVE, [LIVE_OPT_IN_ENV]: "" });
+  it.each(DRIVERS)("refuses %s before it can write, when the target is live and unacknowledged", async (driver) => {
+    const result = await runDriver(driver, { TP_E2E_REST: LIVE, [LIVE_OPT_IN_ENV]: "" });
 
     expect(result.code).toBe(3);
     expect(result.output).toContain("refusing to write to");
@@ -73,17 +98,36 @@ describe("driver database target", () => {
     expect(result.output).not.toContain("[guard]");
   });
 
-  it("keeps the driver's database target out of its own source", () => {
-    const source = readFileSync(DRIVER, "utf8");
+  it.each(DRIVERS)("hands %s the loopback target without asking for an acknowledgement", async (driver) => {
+    const scratch = mkdtempSync(join(tmpdir(), "tp-driver-target-"));
+    writeFileSync(join(scratch, ".env.local"), "SUPABASE_SERVICE_ROLE_KEY=target-test-service-key\n");
+    try {
+      const result = await runDriver(driver, { TP_E2E_REST: LOOPBACK_NO_SERVER }, { cwd: scratch });
+
+      expect(result.output).not.toContain("refusing to write to");
+      // The resolved database is what the guard received — it stops at the
+      // closed port rather than anywhere else, and writes nothing on the way.
+      expect(result.output).toContain(LOOPBACK_NO_SERVER);
+      expect(result.output).not.toContain("starting (marker");
+      expect(result.code).toBe(3);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  it.each(DRIVERS)("keeps the database target out of %s's own source", (driver) => {
+    const source = readFileSync(driver, "utf8");
 
     expect(source).toContain("resolveRestTarget");
     expect(source).not.toContain("5.223.78.194");
+    expect(source).toContain("const PGREST = target.rest;");
+    expect(source).toContain("rest: PGREST");
   });
 
   // The sweep deletes only rows carrying this run's id, so the driver has to
   // put it there — otherwise its own rows would be swept by nobody.
   it("stamps every row it creates with the run id the guard sweeps on", () => {
-    const source = readFileSync(DRIVER, "utf8");
+    const source = readFileSync(ROLE_MATRIX, "utf8");
 
     expect(source).toContain("const probeNotes = () => `role matrix probe [${MARKER} ${run.id}]`");
     expect(source).not.toContain("[${MARKER}]");
