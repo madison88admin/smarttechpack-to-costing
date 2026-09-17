@@ -1,20 +1,21 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createServer, type Server } from "node:http";
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { lockPathFor } from "../scripts/lib/driver-guard.mjs";
 
 // The live drivers create real rows in the live database. This suite proves the
-// guard's two promises with child processes and a stub PostgREST, because the
+// guard's promises with child processes and a stub PostgREST, because the
 // interesting paths — Ctrl+C, a crash, a closed stdout — cannot be observed
 // from inside the same process.
 
 const GUARD = pathToFileURL(resolve("scripts/lib/driver-guard.mjs")).href;
 vi.setConfig({ testTimeout: 30_000 });
 
-type Row = { id: string; request_number: string; status: string; factory_name: string; created_at: string };
+type Row = { id: string; request_number: string; status: string; factory_name: string; created_at: string; notes?: string };
 
 let server: Server;
 let rest: string;
@@ -56,7 +57,9 @@ function startStub() {
           request_number: `CR-TEST-${creates}`,
           status: url.searchParams.get("status") ?? "draft",
           factory_name: "STUB FACTORY",
-          created_at: "2026-09-16T00:00:00Z"
+          created_at: "2026-09-16T00:00:00Z",
+          // Ownership lives in the notes: the guard deletes only its own run's rows.
+          notes: url.searchParams.get("notes") ?? ""
         });
         res.statusCode = 201;
         res.end(JSON.stringify({ id }));
@@ -89,8 +92,15 @@ ${body}
   const file = join(root, `child-${Math.random().toString(36).slice(2)}.mjs`);
   writeFileSync(file, scenario.replace("__REST__", rest));
 
+  // Ambient driver settings must not leak into a test: the lock lives in the
+  // per-test root, and a leftover/updated-TTL value from the developer's shell
+  // would silently change which path is under test.
+  const ambient = { ...process.env };
+  delete ambient.TP_E2E_ALLOW_LEFTOVERS;
+  delete ambient.TP_E2E_LOCK_TTL_MS;
+
   return new Promise((done) => {
-    const child = spawn(process.execPath, [file], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ...options.env } });
+    const child = spawn(process.execPath, [file], { stdio: ["ignore", "pipe", "pipe"], env: { ...ambient, TP_E2E_LOCK_DIR: root, ...options.env } });
     let output = "";
     child.stdout.on("data", (chunk) => { output += chunk; });
     child.stderr.on("data", (chunk) => { output += chunk; });
@@ -101,7 +111,12 @@ ${body}
   });
 }
 
-const CREATE_ROW = `await fetch(REST + "/__create", { method: "POST", headers });`;
+// The real drivers write `run.id` into every row they create; that is what
+// makes a row provably this run's, so the stub rows carry it too.
+const CREATE_ROW = `await fetch(REST + "/__create?notes=" + encodeURIComponent("MARKER-1 " + run.id), { method: "POST", headers });`;
+const CREATE_APPROVED_ROW = `await fetch(REST + "/__create?status=approved&notes=" + encodeURIComponent("MARKER-1 " + run.id), { method: "POST", headers });`;
+/** A row another run created: same marker, someone else's id in the notes. */
+const CREATE_FOREIGN_ROW = `await fetch(REST + "/__create?notes=" + encodeURIComponent("MARKER-1 someone-elses-run"), { method: "POST", headers });`;
 
 beforeEach(async () => {
   rows = [];
@@ -119,7 +134,7 @@ afterEach(async () => {
 
 describe("driver guard", () => {
   it("refuses to start while a previous run's rows still exist", async () => {
-    rows = [{ id: "old-1", request_number: "CR-OLD-1", status: "draft", factory_name: "STUB FACTORY", created_at: "2026-09-15T00:00:00Z" }];
+    rows = [{ id: "old-1", request_number: "CR-OLD-1", status: "draft", factory_name: "STUB FACTORY", created_at: "2026-09-15T00:00:00Z", notes: "MARKER-1 an-earlier-run" }];
 
     const result = await runChild(CREATE_ROW);
 
@@ -146,7 +161,7 @@ describe("driver guard", () => {
     await runChild(`${CREATE_ROW}\nawait run.finish();`, { env: { TP_E2E_LOG: logFile } });
 
     const mirrored = readFileSync(logFile, "utf8");
-    expect(mirrored).toContain("starting (marker: MARKER-1)");
+    expect(mirrored).toContain("starting (marker: MARKER-1, run:");
     expect(mirrored).toContain("clean — no MARKER-1 rows remain");
   });
 
@@ -201,6 +216,8 @@ describe("driver guard", () => {
     expect(result.code).toBe(0);
     expect(rows).toHaveLength(0);
     expect(result.output).toContain("clean — no MARKER-1 rows remain");
+    // The lock is released, or the next run waits six hours for a dead one.
+    expect(existsSync(lockPathFor(rest, root))).toBe(false);
   });
 
   it("deletes rows a run tracked even when their marker is missing", async () => {
@@ -211,17 +228,77 @@ describe("driver guard", () => {
     expect(deletes.filter((id) => id === "req-1").length).toBeGreaterThanOrEqual(1);
   });
 
-  it("warns loudly when cleanup has to delete an approved row", async () => {
+  // An approved request owns a historical costing row; deleting it takes that
+  // row with it, which is how the cost library lost a row before. The sweep
+  // therefore never deletes one, and the run fails loudly instead of sweeping
+  // the problem under the rug.
+  it("leaves an approved row in place instead of cascading its historical costing row", async () => {
     rows = []; // preflight passes; the run then creates an approved row
-    const result = await runChild(
-      `await fetch(REST + "/__create?status=approved", { method: "POST", headers });\nawait run.finish();`
-    );
+    const result = await runChild(`${CREATE_APPROVED_ROW}\nawait run.finish();`);
+
+    expect(result.code).toBe(1);
+    expect(rows).toHaveLength(1); // still there
+    expect(deletes).toHaveLength(0); // nothing was deleted
+    expect(result.output).toContain("never deletes an approved request");
+    expect(result.output).toContain("FAILING this run");
+    expect(result.output).toContain("cleanup-test-requests.mjs --marker=MARKER-1 --apply");
+  });
+
+  // The division of ownership: the driver's own tracked cleanup removes the
+  // exact rows it created — including an approved one, whose cascade it also
+  // removes — while the guard's discovery sweep keeps its hands off anything it
+  // cannot prove is this run's.
+  it("removes an approved row the driver explicitly tracked", async () => {
+    const result = await runChild(`${CREATE_APPROVED_ROW}\nrun.trackRequest("req-1");\nawait run.finish();`);
 
     expect(result.code).toBe(0);
     expect(rows).toHaveLength(0);
-    // Deleting an approved request cascades its historical costing row — the
-    // operator must see that, not discover it later.
-    expect(result.output).toContain("its historical costing row cascaded with it");
+    expect(deletes).toContain("req-1");
+  });
+
+  // The marker alone is not ownership: it also matches another run's in-flight
+  // rows, and deleting those is how one run destroys another's work.
+  it("never deletes a row another run created, and fails the run that finds one", async () => {
+    const result = await runChild(`${CREATE_ROW}\n${CREATE_FOREIGN_ROW}\nawait run.finish();`);
+
+    expect(deletes).toContain("req-1"); // our own row is swept
+    expect(deletes).not.toContain("req-2"); // the other run's row is not touched
+    expect(rows.map((row) => row.id)).toEqual(["req-2"]);
+    expect(result.code).toBe(1); // and the run says so instead of claiming clean
+    expect(result.output).toContain("were not created by this run");
+    expect(result.output).toContain("cleanup-test-requests.mjs");
+  });
+
+  // Two near-simultaneous starts used to both proceed and then delete each
+  // other's rows. The lock makes the second one refuse.
+  it("refuses a second run against the same database while one is live", async () => {
+    writeFileSync(
+      lockPathFor(rest, root),
+      JSON.stringify({ runId: "other-run", name: "e2e-live", pid: process.pid, startedAt: new Date().toISOString() })
+    );
+
+    const result = await runChild(CREATE_ROW);
+
+    expect(result.code).toBe(3);
+    expect(result.output).toContain("another driver run is using");
+    expect(result.output).toContain("e2e-live");
+    expect(creates).toBe(0);
+    expect(deletes).toHaveLength(0);
+    // Refusing must not take the other run's lock away with it.
+    expect(existsSync(lockPathFor(rest, root))).toBe(true);
+  });
+
+  it("takes over a lock whose run is gone instead of refusing forever", async () => {
+    writeFileSync(
+      lockPathFor(rest, root),
+      JSON.stringify({ runId: "dead-run", name: "e2e-live", pid: 999999, startedAt: "2020-01-01T00:00:00Z" })
+    );
+
+    const result = await runChild(`${CREATE_ROW}\nawait run.finish();`);
+
+    expect(result.output).toContain("taking over the lock");
+    expect(result.code).toBe(0);
+    expect(rows).toHaveLength(0);
   });
 
   it("surfaces rows it could not remove instead of claiming success", async () => {
@@ -233,7 +310,7 @@ describe("driver guard", () => {
       if (req.method === "GET") return void res.end(JSON.stringify(rows));
       if (req.method === "POST" && url.pathname === "/__create") {
         creates += 1;
-        rows.push({ id: `req-${creates}`, request_number: `CR-TEST-${creates}`, status: "draft", factory_name: "STUB FACTORY", created_at: "2026-09-16T00:00:00Z" });
+        rows.push({ id: `req-${creates}`, request_number: `CR-TEST-${creates}`, status: "draft", factory_name: "STUB FACTORY", created_at: "2026-09-16T00:00:00Z", notes: url.searchParams.get("notes") ?? "" });
         res.statusCode = 201;
         return void res.end("{}");
       }
@@ -243,6 +320,8 @@ describe("driver guard", () => {
 
     const result = await runChild(`${CREATE_ROW}\nawait run.finish();`);
 
-    expect(result.output).toContain("still carry MARKER-1");
+    expect(result.output).toContain("this run created are still there");
+    expect(result.output).toContain("FAILING this run");
+    expect(result.code).toBe(1);
   });
 });

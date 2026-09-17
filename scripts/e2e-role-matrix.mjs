@@ -22,10 +22,32 @@
 // the request) and refuses to start while a previous run's rows remain.
 //
 // Usage: node scripts/e2e-role-matrix.mjs [baseUrl]
+//
+// The database it writes to is resolved, never inherited from the app's own
+// configuration (which points at production here):
+//
+//   TP_E2E_REST=<postgrest url>  the database to write to and clean up
+//                                (default http://127.0.0.1:8000/rest/v1)
+//   TP_E2E_ALLOW_LIVE_DB=1       required when that url is not loopback
+//
+// It has to be the same database the app under test uses, or the driver's own
+// reads will not see what the app wrote.
 
 import { readFileSync, existsSync } from "node:fs";
 import { mintCookie } from "./mint-cookie.mjs";
-import { beginDriverRun } from "./lib/driver-guard.mjs";
+import { beginDriverRun, exitCleanly } from "./lib/driver-guard.mjs";
+import { resolveRestTarget } from "./lib/rest-target.mjs";
+
+// Refuse an unsafe database before anything else happens — before the service
+// key is read, and long before a row is written. A non-loopback target needs
+// the explicit TP_E2E_ALLOW_LIVE_DB=1 acknowledgement.
+let target;
+try {
+  target = resolveRestTarget({ usage: "node scripts/e2e-role-matrix.mjs [baseUrl]" });
+} catch (error) {
+  console.error(`\n${error.message}\n`);
+  await exitCleanly(3);
+}
 
 const BASE = process.argv[2] ?? "http://localhost:3120";
 
@@ -55,9 +77,12 @@ function loadEnvKey(name, files) {
 }
 
 const SERVICE_KEY = loadEnvKey("SUPABASE_SERVICE_ROLE_KEY", [".env.local", ".env"]);
-const PGREST = "http://5.223.78.194:8000/rest/v1";
+const PGREST = target.rest;
 const MARKER = "E2E-ROLE-MATRIX";
 const STAMP = Date.now();
+
+/** Marks a row as this run's own — the guard sweeps exactly these. */
+const probeNotes = () => `role matrix probe [${MARKER} ${run.id}]`;
 
 const DB_HEADERS = {
   apikey: SERVICE_KEY,
@@ -198,7 +223,7 @@ async function makeRequest(tag, { createRole = "pbd" } = {}) {
       season: "E2E",
       brand: "E2E Brand",
       customer: "E2E Customer",
-      notes: `role matrix probe [${MARKER}]`
+      notes: probeNotes()
     },
     expect: 201
   });
@@ -230,6 +255,8 @@ async function waitFor(id, expected, label) {
 
 async function main() {
   run = await beginDriverRun({ name: "role matrix", marker: MARKER, rest: PGREST, headers: DB_HEADERS });
+  console.log(`direct database: ${PGREST}${target.live ? "  (NON-LOCAL — TP_E2E_ALLOW_LIVE_DB=1 acknowledged)" : "  (local)"}`);
+  console.log(`app under test:  ${BASE}`);
 
   // ══ 1. CREATE — who may open a request at all ════════════════════════════
   setSection("1. create request");
@@ -242,7 +269,7 @@ async function main() {
         styleNumber: `E2E-RM-DENY-${role}-${STAMP}`,
         productName: `Deny ${role}`,
         factoryName: "E2E TEST FACTORY",
-        notes: `role matrix probe [${MARKER}]`
+        notes: probeNotes()
       },
       expect: expected
     });
@@ -253,7 +280,7 @@ async function main() {
   }
 
   const dupStyle = `E2E-RM-DUP-${STAMP}`;
-  const dupBody = { styleNumber: dupStyle, productName: "Dup", factoryName: "E2E TEST FACTORY", notes: `role matrix probe [${MARKER}]` };
+  const dupBody = { styleNumber: dupStyle, productName: "Dup", factoryName: "E2E TEST FACTORY", notes: probeNotes() };
   const first = await api("/api/costing/requests", { method: "POST", role: "pbd", body: dupBody, expect: 201 });
   const firstId = first.json?.data?.id;
   const dup = await api("/api/costing/requests", { method: "POST", role: "pbd", body: dupBody });
@@ -557,7 +584,7 @@ async function main() {
     check(`${affordance.name} withheld from anon`, anon.status !== 200 || !affordance.match.test(anon.text), `→ ${anon.status}`);
   }
 
-  await run.finish();
+  const outcome = await run.finish();
 
   // ══ Summary ═════════════════════════════════════════════════════════════
   let total = 0;
@@ -573,7 +600,8 @@ async function main() {
   console.log(`${"═".repeat(66)}`);
   console.log(`ROLE MATRIX: ${passed}/${total} probes passed across ${bySection.size} sections (${Object.keys(PROFILES).length} roles + anon)`);
   console.log(failed === 0 ? "ALL CHECKS PASSED" : `${failed} FAILURES`);
-  if (failed !== 0) process.exit(1);
+  if (outcome.blocked) console.log("ROWS LEFT BEHIND — see the guard messages above; the database is not clean.");
+  if (failed !== 0 || outcome.blocked) process.exit(1);
 }
 
 main().catch(async (err) => {
