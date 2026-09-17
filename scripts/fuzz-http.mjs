@@ -79,6 +79,9 @@ export const ENDPOINTS = [
   { path: "/api/nextgen/bom/search", role: "pbd", params: ["entityId", "styleNumber", "style", "materialName", "material", "category", "commodity", "materialId", "filter", "pageSize", "skip"], allow: [502, 503, 504], slow: true, requiresUpstream: true },
   { path: "/api/nextgen/mpo/search", role: "pbd", params: ["q"], allow: [502, 503, 504], slow: true, requiresUpstream: true },
   { path: "/api/nextgen/po/search", role: "pbd", params: ["q"], allow: [502, 503, 504], slow: true, requiresUpstream: true },
+  // The PO-line reader: PBD-only (canCreateRequest), and both params are ID
+  // lookups against the PO-line directory rather than free text.
+  { path: "/api/nextgen/po/lines", role: "pbd", params: ["poId", "poNumber"], allow: [502, 503, 504], slow: true, requiresUpstream: true },
   { path: "/api/product/search", role: "pbd", params: ["q"], allow: [502, 503, 504], slow: true, requiresUpstream: true },
   { path: "/api/historical/like-styles", role: "pbd", params: ["limit", "minScore", "yarnType", "knitType", "machineType", "construction", "category", "factory", "brand", "customer", "season", "notes"] },
   { path: "/api/historical/search", role: "pbd", params: ["brand", "customer", "factory", "limit", "q", "season"] }

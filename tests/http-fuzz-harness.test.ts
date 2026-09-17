@@ -6,15 +6,26 @@ import { ENDPOINTS, HOSTILE_NUMERIC, HOSTILE_TEXT, NUMERIC_PARAMS, mintJwt, mint
 
 const API_DIR = join(process.cwd(), "src/app/api");
 
-function routeFiles(): string[] {
+/**
+ * Every route file as the "/api/..." path the harness table is keyed by.
+ *
+ * Two bugs lived here, and together they meant this guard had never checked
+ * anything. `readdirSync(..., { recursive: true })` returns relative paths using
+ * the *native* separator, so filtering on "/route.ts" matched nothing on
+ * Windows: the scan found zero routes and the test passed on every developer
+ * machine without looking at a single param. It only ever really ran in CI on
+ * Linux, where the path built below was missing its "/api" prefix, so every
+ * param of every route was reported as unfuzzed.
+ */
+function routePaths(): { path: string; file: string }[] {
   return (readdirSync(API_DIR, { recursive: true }) as string[])
+    .map((name) => name.split(/[\\/]/).join("/"))
     .filter((name) => name.endsWith("/route.ts"))
-    .map((name) => join(API_DIR, name));
-}
-
-function tablePathFor(file: string) {
-  // src/app/api/foo/bar/route.ts -> /api/foo/bar
-  return "/" + file.slice(API_DIR.length + 1, -"/route.ts".length).replaceAll("\\", "/");
+    .map((name) => ({
+      // foo/bar/route.ts -> /api/foo/bar
+      path: `/api/${name.slice(0, -"/route.ts".length)}`,
+      file: join(API_DIR, name)
+    }));
 }
 
 // Literal query-param reads the routes actually perform. Covers the patterns
@@ -76,8 +87,7 @@ describe("HTTP fuzz harness — endpoint/param table stays in sync with the sour
 
   it("every query param the routes read is covered by the harness table", () => {
     const missing: string[] = [];
-    for (const file of routeFiles()) {
-      const path = tablePathFor(file);
+    for (const { path, file } of routePaths()) {
       const ep = tableByPath.get(path);
       const params = sourceParams(file);
       for (const param of params) {

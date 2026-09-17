@@ -9,6 +9,26 @@ permissions:
   contents: read
 
 jobs:
+  # Advisory dependency audit, and deliberately a job of its own. As a step inside
+  # `verify` it short-circuited the gate: a high advisory fails the step, and every
+  # step after it — including `npm run verify`, the actual lint/typecheck/test/build
+  # contract — was skipped, so the suite ran nowhere but a developer's machine while
+  # the check still showed red. It must stay visible and must stay failing until the
+  # dependency decision is made, so there is no `continue-on-error` and no condition:
+  # it reports on its own line, and nothing downstream depends on it.
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Report high-severity dependency advisories (advisory, not a gate)
+        run: npm audit --omit=dev --audit-level=high
+
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -19,15 +39,26 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm audit --omit=dev --audit-level=high
       # Ops scripts run only on the VPS, where a syntax error is discovered at
       # 02:00 by a cron job that silently fails. Parse them here instead. The
       # backup script's behavior is covered by tests/backup-script.test.ts.
       - name: Syntax-check deploy and ops scripts
         run: |
           for script in deploy/*.sh scripts/*.sh; do
-            echo "sh -n $script"
-            sh -n "$script"
+            # Parse each script with the interpreter its shebang declares. `sh -n`
+            # on a `#!/usr/bin/env bash` script is not a weaker check, it is the
+            # wrong one: dash rejects valid bash (arrays, `set -o pipefail`) and
+            # would accept constructs bash refuses. deploy/sync-to-vps.sh is
+            # invoked as `bash deploy/sync-to-vps.sh` (docs/deployment.md), and
+            # this step reported a syntax error in a script that runs correctly.
+            # sh-declared scripts are still checked as POSIX sh, which is how
+            # the VPS cron jobs and rollout actually invoke them.
+            case "$(head -n 1 "$script")" in
+              *bash*) checker="bash -n" ;;
+              *) checker="sh -n" ;;
+            esac
+            echo "$checker $script"
+            $checker "$script"
           done
       # The full gate: lint -> typecheck -> tests -> production build.
       # Mirrors the local `npm run verify` contract exactly.
