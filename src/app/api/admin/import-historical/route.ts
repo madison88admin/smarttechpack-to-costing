@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { canAccessAdmin, getCurrentRole } from "@/lib/auth/roles";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import {
+  dedupeHistoricalImports,
+  listExistingHistoricalImportKeys
+} from "@/lib/costing/history";
 
 // POST /api/admin/import-historical
 // Accepts a JSON array of historical costing records and imports them into historical_costings
@@ -138,39 +142,13 @@ export async function POST(request: Request) {
     };
   });
 
-  // Dedup check: fetch existing records matching the same style_number + factory_name + approved_at
-  // to avoid importing duplicates from repeated uploads
-  const styleNumbers = [...new Set(rows.map((r) => r.style_number).filter(Boolean))] as string[];
-  let existingKeys = new Set<string>();
-
-  if (styleNumbers.length > 0) {
-    const { data: existing } = await supabase
-      .from("historical_costings")
-      .select("style_number, factory_name, approved_at")
-      .in("style_number", styleNumbers)
-      .limit(500);
-
-    for (const row of (existing ?? []) as Array<{
-      style_number: string | null;
-      factory_name: string | null;
-      approved_at: string | null;
-    }>) {
-      const key = dedupKey(row.style_number, row.factory_name, row.approved_at);
-      if (key) existingKeys.add(key);
-    }
-  }
-
-  // Also dedup within the import batch itself
-  const seenKeys = new Set<string>();
-  const uniqueRows = rows.filter((row) => {
-    const key = dedupKey(row.style_number, row.factory_name, row.approved_at);
-    if (!key) return true; // Keep records without enough data for dedup
-    if (existingKeys.has(key) || seenKeys.has(key)) return false;
-    seenKeys.add(key);
-    return true;
-  });
-
-  const skippedDuplicates = rows.length - uniqueRows.length;
+  // Re-uploading the same export must not add a second set of rows for records
+  // the pool already holds, so the batch is keyed on the ERP record it came
+  // from -- the same identity the NextGen sync uses. Duplicates inside the file
+  // are dropped too, and a record is never re-added from a later export that
+  // moved its cost or its revision (that revision update lands on the same key).
+  const existingKeys = await listExistingHistoricalImportKeys(rows);
+  const { rows: uniqueRows, skipped: skippedDuplicates } = dedupeHistoricalImports(rows, existingKeys);
 
   // Insert in batches of 50
   let inserted = 0;
@@ -193,14 +171,6 @@ export async function POST(request: Request) {
     failed: uniqueRows.length - inserted,
     errors: errors.length > 0 ? errors : undefined
   });
-}
-
-function dedupKey(styleNumber: string | null, factoryName: string | null, approvedAt: string | null): string | null {
-  if (!styleNumber) return null;
-  // Normalize: lowercase style + factory, truncate approved_at to date
-  const factory = (factoryName ?? "").trim().toLowerCase();
-  const date = approvedAt ? approvedAt.slice(0, 10) : "";
-  return `${styleNumber.toLowerCase()}|${factory}|${date}`;
 }
 
 function toNum(value: unknown): number | null {

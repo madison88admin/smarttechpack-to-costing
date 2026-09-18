@@ -290,6 +290,177 @@ export async function countHistoricalCostings(input?: {
   return count ?? 0;
 }
 
+/**
+ * How a historical import -- the Data Bank/ERP export and the NextGen product
+ * sync -- recognises a record the pool already holds: the ERP record it came
+ * from. Both exports ship that record as `id` (the NextGen product grid spells
+ * it `Id`), so the spellings live here once, in the same list the lookup query
+ * filters on. Keying on anything else (style + factory + import date) let a
+ * re-run of the same export insert a second set of rows: the date is restamped
+ * when the file omits it, so every key looked new.
+ */
+const HISTORICAL_RECORD_ID_KEYS = ["id", "Id"] as const;
+
+/** Where the NextGen product id lives when the payload did not carry it. */
+const HISTORICAL_ENTITY_ID_COLUMN = "nextgen_entity_id";
+
+/** The fields an import identity is computed from -- a pending row or a stored one. */
+export type HistoricalImportIdentity = {
+  style_number?: string | null;
+  factory_name?: string | null;
+  total_cost?: number | null;
+  currency?: string | null;
+  raw_payload?: Record<string, unknown> | null;
+  nextgen_entity_id?: string | null;
+};
+
+/**
+ * Reads the ERP record id from the payload keys an export can spell it with, and
+ * says which one it came from so the lookup can filter on that same path.
+ */
+function historicalRecordId(
+  row: HistoricalImportIdentity
+): { source: string; id: string } | null {
+  for (const key of HISTORICAL_RECORD_ID_KEYS) {
+    const value = row.raw_payload?.[key];
+    if (typeof value === "string" && value.trim()) return { source: key, id: value.trim() };
+    if (typeof value === "number" && Number.isFinite(value)) return { source: key, id: String(value) };
+  }
+  const entityId = row.nextgen_entity_id?.trim();
+  return entityId ? { source: HISTORICAL_ENTITY_ID_COLUMN, id: entityId } : null;
+}
+
+/** The key an import de-duplicates on. Id-carrying rows -- every real export --
+ * key on the ERP record alone, so a later export of the same record is the same
+ * row even when its cost, revision or style moved. Rows whose export carried no
+ * id fall back to their own content (no timestamp: a repeat import of the same
+ * file would restamp it and look new).
+ */
+export function historicalImportKey(row: HistoricalImportIdentity): string {
+  const recordId = historicalRecordId(row);
+  if (recordId) return `erp:${recordId.id.toLowerCase()}`;
+  return [
+    "content",
+    (row.style_number ?? "").trim().toLowerCase(),
+    (row.factory_name ?? "").trim().toLowerCase(),
+    row.total_cost ?? "",
+    (row.currency ?? "").trim().toLowerCase()
+  ].join("|");
+}
+
+/** Each id spelling selected as `payload_<key>`, so both sides build the same key. */
+const HISTORICAL_IMPORT_KEY_COLUMNS = [
+  "style_number",
+  "factory_name",
+  "total_cost",
+  "currency",
+  "nextgen_entity_id",
+  ...HISTORICAL_RECORD_ID_KEYS.map((key) => `payload_${key}:raw_payload->>${key}`)
+].join(", ");
+
+/** Ids per lookup request -- keeps the `in.(...)` URL well short of a header limit. */
+const HISTORICAL_IMPORT_LOOKUP_CHUNK = 150;
+/** PostgREST caps a response at 1000 rows (`db-max-rows`), whatever `limit` asks. */
+const HISTORICAL_IMPORT_LOOKUP_PAGE = 1000;
+
+function chunkValues<T>(values: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < values.length; i += size) chunks.push(values.slice(i, i + size));
+  return chunks;
+}
+
+function existingImportKey(row: Record<string, unknown>): string {
+  const rawPayload: Record<string, unknown> = {};
+  for (const key of HISTORICAL_RECORD_ID_KEYS) rawPayload[key] = row[`payload_${key}`];
+  return historicalImportKey({
+    style_number: row.style_number as string | null,
+    factory_name: row.factory_name as string | null,
+    total_cost: row.total_cost as number | null,
+    currency: row.currency as string | null,
+    nextgen_entity_id: row.nextgen_entity_id as string | null,
+    raw_payload: rawPayload
+  });
+}
+
+/**
+ * Which of a batch's records the pool already holds — the single idempotency
+ * check every import path shares, so a repeat sync can only ever add records it
+ * has never seen. Reads nothing it was not asked about: the batch's ERP ids by
+ * JSON path (exact, and independent of a style being renamed between exports),
+ * plus the batch's styles for rows whose export carried no id.
+ */
+export async function listExistingHistoricalImportKeys(
+  records: HistoricalImportIdentity[]
+): Promise<Set<string>> {
+  const keys = new Set<string>();
+  // One bucket per id source, so a Data Bank export never pays for a NextGen
+  // lookup and vice versa -- only sources the batch actually uses are queried.
+  const idsBySource = new Map<string, Set<string>>();
+  const styleNumbers = new Set<string>();
+  for (const record of records) {
+    const recordId = historicalRecordId(record);
+    if (recordId) {
+      const bucket = idsBySource.get(recordId.source) ?? new Set<string>();
+      bucket.add(recordId.id);
+      idsBySource.set(recordId.source, bucket);
+    } else {
+      const style = (record.style_number ?? "").trim();
+      if (style) styleNumbers.add(style);
+    }
+  }
+
+  const supabase = createSupabaseServiceClient();
+  const collect = (data: unknown[] | null) => {
+    for (const row of data ?? []) keys.add(existingImportKey(row as Record<string, unknown>));
+  };
+  // Pages rather than asking for a big limit: a style chunk can match more rows
+  // than the server will return in one response, and a truncated read would
+  // report records the pool already holds as new -- the duplicate this check
+  // exists to prevent.
+  const read = async (column: string, values: string[]) => {
+    for (let from = 0; ; from += HISTORICAL_IMPORT_LOOKUP_PAGE) {
+      const { data, error } = await supabase
+        .from("historical_costings")
+        .select(HISTORICAL_IMPORT_KEY_COLUMNS)
+        .in(column, values)
+        .order("id", { ascending: true })
+        .range(from, from + HISTORICAL_IMPORT_LOOKUP_PAGE - 1);
+      if (error) throw error;
+      collect(data);
+      if (!data || data.length < HISTORICAL_IMPORT_LOOKUP_PAGE) return;
+    }
+  };
+
+  for (const [source, ids] of idsBySource) {
+    const column = source === HISTORICAL_ENTITY_ID_COLUMN ? source : `raw_payload->>${source}`;
+    for (const chunk of chunkValues([...ids], HISTORICAL_IMPORT_LOOKUP_CHUNK)) await read(column, chunk);
+  }
+
+  for (const styles of chunkValues([...styleNumbers], HISTORICAL_IMPORT_LOOKUP_CHUNK)) {
+    await read("style_number", styles);
+  }
+
+  return keys;
+}
+
+/**
+ * The batch's own repeats dropped before insert (a file may list a record
+ * twice), keeping the first occurrence's data.
+ */
+export function dedupeHistoricalImports<T extends HistoricalImportIdentity>(
+  records: T[],
+  existingKeys: Set<string>
+): { rows: T[]; skipped: number } {
+  const seen = new Set<string>();
+  const rows = records.filter((record) => {
+    const key = historicalImportKey(record);
+    if (existingKeys.has(key) || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  return { rows, skipped: records.length - rows.length };
+}
+
 export type HistoricalFacetOptions = {
   yarnTypes: string[];
   knitTypes: string[];

@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
 import { canAccessAdmin, getCurrentRole } from "@/lib/auth/roles";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
+import { dedupeHistoricalImports, listExistingHistoricalImportKeys } from "@/lib/costing/history";
 import { nextGenPost } from "@/lib/nextgen/client";
 import {
   NEXTGEN_HISTORICAL_SOURCE,
   NEXTGEN_HISTORICAL_STATUSES,
   enrichWithBomConsumption,
   fetchNextGenHistoricalProducts,
-  historicalDedupKey,
   mapNextGenProductToHistorical,
   statusFilter
 } from "@/lib/nextgen/historical";
@@ -117,23 +117,12 @@ export async function POST(request: Request) {
       await enrichWithBomConsumption(mapped, 100);
     }
 
-    // Skip rows already present (any source) for the same style + factory so
-    // AI search and analytics never see near-duplicate rows.
-    const styles = [...new Set(mapped.map((r) => r.style_number).filter((s): s is string => Boolean(s)))];
-    const existingKeys = new Set<string>();
-    for (const styleChunk of chunk(styles, 400)) {
-      const { data: existing } = await supabase
-        .from("historical_costings")
-        .select("style_number, factory_name")
-        .in("style_number", styleChunk)
-        .limit(4000);
-      for (const row of (existing ?? []) as Array<{ style_number: string | null; factory_name: string | null }>) {
-        existingKeys.add(historicalDedupKey(row.style_number, row.factory_name));
-      }
-    }
-
-    const toInsert = mapped.filter((record) => !existingKeys.has(historicalDedupKey(record.style_number, record.factory_name)));
-    const alreadySynced = mapped.length - toInsert.length;
+    // A repeat sync must not add a second row for a product the pool already
+    // holds. The batch is keyed on the ERP record id (the same identity the
+    // Data Bank import uses), not on style + factory, which reads a renamed
+    // style as a new product and a re-run as a new record.
+    const existingKeys = await listExistingHistoricalImportKeys(mapped);
+    const { rows: toInsert, skipped: alreadySynced } = dedupeHistoricalImports(mapped, existingKeys);
 
     let inserted = 0;
     const errors: string[] = [];
