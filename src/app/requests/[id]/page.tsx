@@ -25,7 +25,7 @@ import { resolveFactoryProfileId } from "@/lib/admin/assignments";
 import { getChecklistResults } from "@/lib/costing/checklist";
 import { tryListChangeRequests } from "@/lib/costing/change-requests";
 import { getNextGenPricingForRequest } from "@/lib/costing/nextgen-pricing";
-import { tryGetLastOutlierAcknowledgement } from "@/lib/costing/outlier-review";
+import { isOutlierAcknowledgementValid, tryGetLastOutlierAcknowledgement, tryGetOutlierReview } from "@/lib/costing/outlier-review";
 import { tryGetCostingRequest } from "@/lib/costing/requests";
 import { tryListSavedComparisonSetsForRequest } from "@/lib/comparison-sets";
 import {
@@ -142,6 +142,7 @@ export default async function RequestDetailPage({ params }: { params: { id: stri
     workflowSettings,
     factoryPhotos,
     lastAcknowledgement,
+    outlierReview,
     savedComparisonSets,
     masterBenchmark,
     requestComments,
@@ -157,6 +158,7 @@ export default async function RequestDetailPage({ params }: { params: { id: stri
     getWorkflowSettings().catch(() => defaultWorkflowSettings),
     data ? tryGetFactoryPhotos(data.id) : Promise.resolve({ data: null, error: null }),
     data ? tryGetLastOutlierAcknowledgement(data.id) : Promise.resolve({ data: null, error: null }),
+    data ? tryGetOutlierReview(data.id) : Promise.resolve({ data: null, error: null }),
     data ? tryListSavedComparisonSetsForRequest(data.id) : Promise.resolve({ data: [], error: null }),
     // Master material benchmark — semi-automation for MD review. Internal
     // roles only; the factory never sees the master list references.
@@ -220,7 +222,7 @@ export default async function RequestDetailPage({ params }: { params: { id: stri
   const effectiveWholesale = pbdWholesale ?? nextgenWholesale;
   const pricingTotals = totals && effectiveWholesale !== null ? { ...totals, wholesalePrice: effectiveWholesale } : totals;
 
-  const smartReview = generateSmartReviewSync(
+  const smartReview = outlierReview.data?.review ?? generateSmartReviewSync(
     {
       status,
       totals: pricingTotals,
@@ -241,6 +243,9 @@ export default async function RequestDetailPage({ params }: { params: { id: stri
   // Structured margin info for the Approval tab banner (PBD sees the exact
   // margin vs the guideline during the manual Costing ↔ PBD discussion).
   const marginInfo = computeGrossMarginInfo(pricingTotals, workflowSettings.marginThresholdUsd);
+  const approvalBlockedByOutliers =
+    smartReview.riskLevel === "high" &&
+    !isOutlierAcknowledgementValid(lastAcknowledgement.data, latestCbd?.submitted_at ?? null);
   const latestDiff = cbdDiff.result;
   const latestDiffImpact = latestDiff?.costImpacts[latestDiff.costImpacts.length - 1];
   const latestDiffChangedCount = latestDiff?.diffs[latestDiff.diffs.length - 1]?.filter((d) => d.changed).length ?? 0;
@@ -297,6 +302,7 @@ export default async function RequestDetailPage({ params }: { params: { id: stri
             canAct={canRunPbdAction(role)}
             canCostingAct={canRunCostingAction(role)}
             pricingReady={data?.pbd_pricing_status === "entered"}
+            approvalBlockedByOutliers={approvalBlockedByOutliers}
             openChanges={openChangeRequests}
           />
         </div>

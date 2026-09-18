@@ -175,6 +175,18 @@ export async function getLastOutlierAcknowledgement(
 }
 
 /** Best-effort wrapper for the detail page (never throws). */
+export async function tryGetOutlierReview(requestId: string) {
+  try {
+    const supabase = createSupabaseServiceClient();
+    return { data: await getOutlierReview(supabase, requestId), error: null };
+  } catch (error) {
+    return {
+      data: null,
+      error: error instanceof Error ? error.message : "Unable to load outlier review"
+    };
+  }
+}
+
 export async function tryGetLastOutlierAcknowledgement(requestId: string) {
   try {
     const supabase = createSupabaseServiceClient();

@@ -413,12 +413,18 @@ export function FactoryCbdForm({
 
     setState("saved");
     const issueCount = Array.isArray(result.data.validationIssues) ? result.data.validationIssues.length : 0;
+    // The server files one revision per distinct CBD content: a resubmission
+    // that changed nothing still moves the request (the hand-back) but writes
+    // no new revision, and saying "submitted successfully" for that would be a
+    // misleading double claim.
     const msg =
-      status === "submitted"
-        ? issueCount
-          ? `CBD submitted with ${issueCount} validation issue(s)`
-          : "CBD submitted successfully"
-        : "CBD draft saved";
+      status !== "submitted"
+        ? "CBD draft saved"
+        : result.data.duplicate
+          ? "No changes to file — the CBD was resubmitted unchanged"
+          : issueCount
+            ? `CBD submitted with ${issueCount} validation issue(s)`
+            : "CBD submitted successfully";
     setMessage(msg);
     toast.add({
       type: status === "submitted" && issueCount > 0 ? "warning" : "success",

@@ -170,6 +170,12 @@ export function CreateRequestForm({
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (submittingRef.current) return;
+    if (!selected) {
+      setState("error");
+      setMessage("Select a NextGen product before creating a draft.");
+      toast.add({ type: "warning", description: "Select a NextGen product before creating a draft." });
+      return;
+    }
     submittingRef.current = true;
     setState("saving");
     setMessage("");

@@ -78,7 +78,9 @@ function submitResponder(
       select: () => ({ data: [{ id: "req-1" }], error: null })
     },
     factory_cbds: {
-      single: () => ({ data: { id: "cbd-1" }, error: null })
+      single: () => ({ data: { id: "cbd-1" }, error: null }),
+      // No revision on file by default, so every submit writes one.
+      maybeSingle: (): { data: unknown; error: unknown } => ({ data: null, error: null })
     },
     ...(clarificationAction
       ? { approval_actions: { select: () => ({ data: approvalRows, error: null }) } }
@@ -247,6 +249,77 @@ describe("submitFactoryCbd — submit path", () => {
     const rollback = calls.filter((c) => c.table === "factory_cbds" && c.terminal === "delete");
     expect(rollback).toHaveLength(1);
     expect(rollback[0].chain.eq).toEqual([["id", "cbd-1"]]);
+  });
+});
+
+// A resubmission whose content equals the revision already on file is the same
+// CBD filed again (an impatient repeat, a reload-and-resubmit, or a deliberate
+// hand-back). It must not add a revision to the trail, but the workflow must
+// still move — otherwise a hand-back would be a dead end.
+describe("submitFactoryCbd — identical resubmission", () => {
+  /** The payload the previous revision holds, key order reversed to mimic jsonb. */
+  async function firstRevisionPayload() {
+    const { client, calls } = createMockSupabase(submitResponder("sent_to_factory"));
+    mocks.client = client;
+    await submitFactoryCbd(validInput());
+    const row = (cbdRowInserts(calls)[0] ?? {}) as { raw_payload?: Record<string, unknown> };
+    return Object.fromEntries(Object.entries(row.raw_payload ?? {}).reverse());
+  }
+
+  it("files no second revision, but still applies the transition and records the submit", async () => {
+    const previousPayload = await firstRevisionPayload();
+    const responder = submitResponder("needs_clarification");
+    responder.factory_cbds.maybeSingle = () => ({ data: { id: "cbd-0", raw_payload: previousPayload }, error: null });
+    const { client, calls } = createMockSupabase(responder);
+    mocks.client = client;
+
+    const result = await submitFactoryCbd(validInput());
+
+    expect(result.duplicate).toBe(true);
+    // The flow keeps pointing at the revision that is actually on file.
+    expect(result.id).toBe("cbd-0");
+    expect(cbdRowInserts(calls)).toHaveLength(0);
+    expect(inserts(calls, "cbd_material_lines")).toHaveLength(0);
+    // The hand-back still moves the request: status, audit action, event.
+    expect(updates(calls, "costing_requests")[0]).toMatchObject({ status: "for_md_review" });
+    expect(inserts(calls, "approval_actions")[0]).toMatchObject({ action: "submit", to_status: "for_md_review" });
+    expect(inserts(calls, "workflow_events")).toHaveLength(1);
+  });
+
+  it("files a revision when a single value differs", async () => {
+    const previousPayload = await firstRevisionPayload();
+    const responder = submitResponder("needs_clarification");
+    responder.factory_cbds.maybeSingle = () => ({
+      data: { id: "cbd-0", raw_payload: { ...previousPayload, moq: 999 } },
+      error: null
+    });
+    const { client, calls } = createMockSupabase(responder);
+    mocks.client = client;
+
+    const result = await submitFactoryCbd(validInput());
+
+    expect(result.duplicate).toBe(false);
+    expect(cbdRowInserts(calls)).toHaveLength(1);
+  });
+
+  it("always writes a draft, and never blocks on a failed lookup", async () => {
+    const previousPayload = await firstRevisionPayload();
+    const draftResponder = submitResponder("draft");
+    draftResponder.factory_cbds.maybeSingle = () => ({ data: { id: "cbd-0", raw_payload: previousPayload }, error: null });
+    const draftRun = createMockSupabase(draftResponder);
+    mocks.client = draftRun.client;
+    const draft = await submitFactoryCbd(validInput({ status: "draft" }));
+    expect(draft.duplicate).toBe(false);
+    expect(cbdRowInserts(draftRun.calls)).toHaveLength(1);
+
+    // A lookup that errors must not swallow the submit.
+    const brokenResponder = submitResponder("sent_to_factory");
+    brokenResponder.factory_cbds.maybeSingle = () => ({ data: null, error: { message: "boom" } });
+    const brokenRun = createMockSupabase(brokenResponder);
+    mocks.client = brokenRun.client;
+    const submitted = await submitFactoryCbd(validInput());
+    expect(submitted.duplicate).toBe(false);
+    expect(cbdRowInserts(brokenRun.calls)).toHaveLength(1);
   });
 });
 

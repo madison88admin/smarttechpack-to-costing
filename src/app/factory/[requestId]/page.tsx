@@ -19,6 +19,7 @@ import { resolveFactoryProfileId } from "@/lib/admin/assignments";
 import { tryGetCostingRequest } from "@/lib/costing/requests";
 import { tryGetCbdDiff } from "@/lib/costing/cbd-diff";
 import { getEscalationStatus } from "@/lib/notifications/escalation";
+import { isOutlierAcknowledgementValid, tryGetLastOutlierAcknowledgement, tryGetOutlierReview } from "@/lib/costing/outlier-review";
 import { listRequestComments } from "@/lib/costing/request-comments";
 import { tryListChangeRequests } from "@/lib/costing/change-requests";
 import type { CostingStatus } from "@/lib/workflow/status";
@@ -90,6 +91,16 @@ export default async function FactoryRequestPage({ params, searchParams }: { par
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0] ?? null;
   const showMdReview = isInternal && canRunMdAction(role);
   const showLaneActions = isInternal && (canRunCostingAction(role) || canRunPbdAction(role));
+  const [outlierReview, lastOutlierAcknowledgement] = showLaneActions && data?.id
+    ? await Promise.all([
+        tryGetOutlierReview(data.id),
+        tryGetLastOutlierAcknowledgement(data.id)
+      ])
+    : [{ data: null, error: null }, { data: null, error: null }];
+  const approvalBlockedByOutliers =
+    canRunPbdAction(role) &&
+    outlierReview.data?.review.riskLevel === "high" &&
+    !isOutlierAcknowledgementValid(lastOutlierAcknowledgement.data, latestCbd?.submitted_at ?? null);
   const requestedEntries = openChangeRequests.map((row) => ({
     field: row.field_label || row.field_key,
     fieldKey: row.field_key,
@@ -230,6 +241,7 @@ export default async function FactoryRequestPage({ params, searchParams }: { par
                     canAct={canRunPbdAction(role)}
                     canCostingAct={canRunCostingAction(role)}
                     pricingReady={data?.pbd_pricing_status === "entered"}
+                    approvalBlockedByOutliers={approvalBlockedByOutliers}
                     openChanges={openChangeRequests.map((row) => ({ field: row.field_label || row.field_key, requestedValue: row.requested_value }))}
                     hideLinks
                   />

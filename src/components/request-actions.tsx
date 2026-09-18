@@ -16,6 +16,7 @@ export function RequestActions({
   canAct,
   canCostingAct,
   pricingReady = true,
+  approvalBlockedByOutliers = false,
   openChanges = [],
   hideLinks = false
 }: {
@@ -24,6 +25,8 @@ export function RequestActions({
   canAct: boolean;
   canCostingAct?: boolean;
   pricingReady?: boolean;
+  /** Costing must acknowledge active high-risk outliers before PBD can approve. */
+  approvalBlockedByOutliers?: boolean;
   /** Open structured change requests — surfaced as a warning, never a block. */
   openChanges?: Array<{ field: string; requestedValue: string }>;
   /** Set when embedded on the CBD view itself, where those links point here. */
@@ -201,6 +204,12 @@ export function RequestActions({
               <a href={`/requests/${requestId}#pbd-pricing-review`}>Open Pricing Review</a>
             </div>
           ) : null}
+          {approvalBlockedByOutliers ? (
+            <div className="notice warning-notice">
+              Costing must acknowledge the active high-risk outlier flags before PBD approval.
+              <a href={`/requests/${requestId}#smart-cost-review`}> Open Smart Cost Review</a>
+            </div>
+          ) : null}
           <div className="action-buttons-row">
             <button className="button secondary" onClick={() => runAction("clarify")} disabled={busyAction !== null}>
               {busyAction === "clarify" ? <><span className="spinner" /> Sending...</> : <><IconAlert size={16} /> Request Factory Correction</>}
@@ -208,7 +217,7 @@ export function RequestActions({
             <button className="button secondary btn-danger" onClick={() => runAction("reject")} disabled={busyAction !== null}>
               {busyAction === "reject" ? <><span className="spinner" /> Saving...</> : <><IconX size={16} /> Reject</>}
             </button>
-            <button className="button btn-success" onClick={() => runAction("approve")} disabled={busyAction !== null || !pricingReady} title={!pricingReady ? "Complete PBD selling price review first" : undefined}>
+            <button className="button btn-success" onClick={() => runAction("approve")} disabled={busyAction !== null || !pricingReady || approvalBlockedByOutliers} title={approvalBlockedByOutliers ? "Costing must acknowledge active outliers first" : !pricingReady ? "Complete PBD selling price review first" : undefined}>
               {busyAction === "approve" ? <><span className="spinner" /> Saving...</> : <><IconCheck size={16} /> Approve</>}
             </button>
           </div>

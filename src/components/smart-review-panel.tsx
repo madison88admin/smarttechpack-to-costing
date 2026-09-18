@@ -97,7 +97,7 @@ export function SmartReviewPanel({
   }
 
   return (
-    <section className="panel smart-review">
+    <section className="panel smart-review" id="smart-cost-review">
       <div className="toolbar">
         <div>
           <p className="eyebrow">AI Assist</p>

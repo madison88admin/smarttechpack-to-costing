@@ -106,7 +106,9 @@ function responder(trail: ReadonlyArray<Record<string, unknown>>): Responder {
     },
     factory_cbds: {
       single: () => ({ data: { id: "cbd-1" }, error: null }),
-      insert: () => ({ data: { id: "cbd-1" }, error: null })
+      insert: () => ({ data: { id: "cbd-1" }, error: null }),
+      // No revision on file yet — the resubmit is a genuine revision.
+      maybeSingle: (): { data: unknown; error: unknown } => ({ data: null, error: null })
     },
     user_profiles: {
       select: (chain) => ({

@@ -185,7 +185,9 @@ describe("FULL LIFECYCLE — create → factory → MD → costing → PBD appro
           select: () => ({ data: [{ id: REQUEST_ID }], error: null })
         },
         factory_cbds: {
-          single: () => ({ data: { id: "cbd-1" }, error: null }) // insert().select().single()
+          single: () => ({ data: { id: "cbd-1" }, error: null }), // insert().select().single()
+          // Nothing on file yet: the first submission is a new revision.
+          maybeSingle: (): { data: unknown; error: unknown } => ({ data: null, error: null })
         },
         historical_costings: { select: () => ({ data: [], error: null }) }, // no benchmark history → clean submit
         workflow_settings: { maybeSingle: () => ({ data: null, error: null }) },
