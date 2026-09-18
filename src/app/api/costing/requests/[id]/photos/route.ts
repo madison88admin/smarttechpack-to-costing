@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServiceClient } from "@/lib/supabase/server";
 import { pgrestValue } from "@/lib/supabase/filters";
-import { canSubmitFactoryCbd, canReviewCbd, getCurrentRole, getCurrentUserName } from "@/lib/auth/roles";
+import { canSubmitFactoryCbd, canReviewCbd, getCurrentRole, getCurrentUserId, getCurrentUserName } from "@/lib/auth/roles";
+import { factoryOwnsRequest } from "@/lib/admin/assignments";
 import { validateRequestId } from "@/lib/api/validate";
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
@@ -11,6 +12,13 @@ const BUCKET_NAME = "factory-photos";
 export async function GET(_: Request, context: { params: { id: string } }) {
   const idError = validateRequestId(context.params.id);
   if (idError) return idError;
+
+  // The factory's photo panel loads this path, so the middleware lets factory
+  // sessions reach it — which means the assignment check has to live here: a
+  // factory user may only read the photos of a request assigned to them.
+  if (getCurrentRole() === "factory" && !(await factoryOwnsRequest(getCurrentUserId(), context.params.id))) {
+    return NextResponse.json({ ok: false, error: "Request is not assigned to this Factory user" }, { status: 403 });
+  }
 
   const supabase = createSupabaseServiceClient();
   const { data, error } = await supabase

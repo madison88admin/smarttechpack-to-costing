@@ -41,6 +41,11 @@ predicates, not literals: `canAccessInternalCostData(role)` (everything but Fact
 surfaces. Route and page guards call a predicate — re-listing roles in a route is how the
 Like Styles search, its exports and the history exports drifted apart.
 
+Factory path confinement is `src/lib/auth/factory-paths.ts`: `src/middleware.ts` imports it
+and `tests/factory-path-allowlist.test.ts` executes it, so a path a factory screen calls but
+the list forgets fails a test instead of 403-ing a control the user can see (the CBD
+wizard's photo panel did exactly that).
+
 ## Deploy
 
 `deploy/apply-migrations.sh` applies an explicit ordered manifest as **supabase_admin** (not

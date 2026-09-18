@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { SESSION_COOKIE, verifySessionToken } from "@/lib/auth/session";
+import { isFactoryAllowedPath } from "@/lib/auth/factory-paths";
 
 const publicPaths = ["/login", "/api/auth/login", "/api/health"];
 const cronPaths = new Set([
@@ -29,19 +30,6 @@ function isSameOrigin(request: NextRequest) {
   } catch {
     return false;
   }
-}
-
-function isFactoryAllowedPath(pathname: string) {
-  // /requests (exact) shows factory users their own assigned requests — the
-  // page scopes rows to the caller's assignment. Detail pages stay on the
-  // /factory/[id] CBD wizard, so /requests/* is not opened up.
-  if (pathname === "/" || pathname === "/requests" || pathname.startsWith("/factory/") || pathname === "/factory") return true;
-  if (/^\/requests\/[0-9a-f-]+$/i.test(pathname)) return true;
-  if (pathname === "/api/auth/logout" || pathname === "/api/notifications/pending" || pathname === "/api/notifications/read" || pathname === "/api/costing/import") return true;
-  if (/^\/api\/costing\/requests\/[0-9a-f-]+\/cbd$/i.test(pathname)) return true;
-  if (/^\/api\/costing\/requests\/[0-9a-f-]+\/change-requests$/i.test(pathname)) return true;
-  if (/^\/api\/product\/[^/]+\/image$/i.test(pathname)) return true;
-  return false;
 }
 
 export async function middleware(request: NextRequest) {

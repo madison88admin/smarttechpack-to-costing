@@ -255,19 +255,9 @@ export async function submitFactoryCbd(input: SubmitCbdInput) {
     lines: input.lines.length ? input.lines : buildStructuredValidationLines(input)
   });
 
-  const { data: cbd, error: cbdError } = await supabase
-    .from("factory_cbds")
-    .insert({
-      costing_request_id: input.costingRequestId,
-      submitted_by: input.submittedBy ?? null,
-      // submitted_at is stamped by the database (DEFAULT now(), migration
-      // 015) so the outlier-acknowledgement freshness check compares DB-clock
-      // values on both sides. Never send an app-clock timestamp here — client
-      // clocks can run ahead of the database and make a fresh ack look stale.
-      // Drafts stay explicitly null (nothing submitted yet).
-      ...(status === "submitted" ? {} : { submitted_at: null }),
-      status,
-      raw_payload: {
+  // Everything this submit would store. Built before the insert so a
+  // resubmission can be compared with the revision already on file.
+  const rawPayload = {
         currency: input.currency,
         // Header info (Excel template)
         header: {
@@ -340,30 +330,64 @@ export async function submitFactoryCbd(input: SubmitCbdInput) {
         grossMarginPercent: costingTotals.grossMarginPercent,
         breakEvenQuantity: costingTotals.breakEvenQuantity,
         notes: input.notes ?? null
-      }
-    })
-    .select("id")
-    .single();
+  };
 
-  if (cbdError) throw cbdError;
+  // One submit is one revision, and a resubmission whose content is identical
+  // to the revision already on file is the same CBD filed again: an impatient
+  // repeat, a reload-and-resubmit, or a deliberate hand-back after a withdrawn
+  // clarification. Filing it again added a "no changes" entry to the revision
+  // trail and a second submission to the request, which is what the reviewers
+  // actually see. The submit action and the status transition below still run
+  // unchanged, so a hand-back still moves the request — only the duplicate
+  // revision row is skipped. (A client-side signature could not decide this:
+  // the wizard is re-prefilled from the stored revision after every submit, so
+  // the same content produces a different form signature.)
+  const previousRevision =
+    status === "submitted" ? await findLatestSubmittedRevision(supabase, input.costingRequestId) : null;
+  const duplicate = previousRevision !== null && sameCbdContent(rawPayload, previousRevision.raw_payload);
 
-  // Insert structured line items into cbd_material_lines with section tags
-  const structuredLines = buildStructuredLinePayloads(input, cbd.id);
-  if (structuredLines.length) {
-    const { error: linesError } = await supabase
-      .from("cbd_material_lines")
-      .insert(structuredLines);
+  let cbd: { id: string };
+  if (duplicate) {
+    cbd = { id: previousRevision.id };
+  } else {
+    const { data, error: cbdError } = await supabase
+      .from("factory_cbds")
+      .insert({
+        costing_request_id: input.costingRequestId,
+        submitted_by: input.submittedBy ?? null,
+        // submitted_at is stamped by the database (DEFAULT now(), migration
+        // 015) so the outlier-acknowledgement freshness check compares DB-clock
+        // values on both sides. Never send an app-clock timestamp here — client
+        // clocks can run ahead of the database and make a fresh ack look stale.
+        // Drafts stay explicitly null (nothing submitted yet).
+        ...(status === "submitted" ? {} : { submitted_at: null }),
+        status,
+        raw_payload: rawPayload
+      })
+      .select("id")
+      .single();
 
-    if (linesError) throw linesError;
-  }
+    if (cbdError) throw cbdError;
+    cbd = data as { id: string };
 
-  // Also insert legacy BOM lines if any
-  if (input.lines.length) {
-    const { error: linesError } = await supabase
-      .from("cbd_material_lines")
-      .insert(buildMaterialPayload(input, cbd.id));
+    // Insert structured line items into cbd_material_lines with section tags
+    const structuredLines = buildStructuredLinePayloads(input, cbd.id);
+    if (structuredLines.length) {
+      const { error: linesError } = await supabase
+        .from("cbd_material_lines")
+        .insert(structuredLines);
 
-    if (linesError) throw linesError;
+      if (linesError) throw linesError;
+    }
+
+    // Also insert legacy BOM lines if any
+    if (input.lines.length) {
+      const { error: linesError } = await supabase
+        .from("cbd_material_lines")
+        .insert(buildMaterialPayload(input, cbd.id));
+
+      if (linesError) throw linesError;
+    }
   }
 
   // Auto-resolve structured change requests whose requested value this
@@ -491,11 +515,12 @@ export async function submitFactoryCbd(input: SubmitCbdInput) {
     const nextReview = nextReviewFor(nextStatus);
 
     // Record the change once (the digest and audit trail read it) and describe
-    // it to the reviewer who has to act on the revised numbers.
-    const cbdChange = await recordCbdChangeAlert(
-      input.costingRequestId,
-      context.factoryName
-    ).catch(() => null);
+    // it to the reviewer who has to act on the revised numbers. Nothing changed
+    // on a duplicate resubmit, so there is no change to announce — the handoff
+    // alert below still tells the owner the request is back with them.
+    const cbdChange = duplicate
+      ? null
+      : await recordCbdChangeAlert(input.costingRequestId, context.factoryName).catch(() => null);
 
     // A correction PBD requested after Costing validated returns straight to
     // PBD: Costing's gate never re-opens, so a "re-validate before approval"
@@ -545,8 +570,69 @@ export async function submitFactoryCbd(input: SubmitCbdInput) {
 
   return {
     ...cbd,
-    validationIssues
+    validationIssues,
+    duplicate
   };
+}
+
+/**
+ * The newest submitted revision — what a resubmission has to differ from.
+ * Returns null when there is none, or when the lookup itself fails: a missed
+ * duplicate is a smaller problem than a refused submit, so this never throws.
+ */
+async function findLatestSubmittedRevision(
+  supabase: ReturnType<typeof createSupabaseServiceClient>,
+  costingRequestId: string
+): Promise<{ id: string; raw_payload: unknown } | null> {
+  try {
+    const { data, error } = await supabase
+      .from("factory_cbds")
+      .select("id, raw_payload")
+      .eq("costing_request_id", costingRequestId)
+      .eq("status", "submitted")
+      .order("submitted_at", { ascending: false, nullsFirst: false })
+      .order("id", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) return null;
+    return (data as { id: string; raw_payload: unknown } | null) ?? null;
+  } catch {
+    // Never let duplicate detection fail a submit: the worst case is that a
+    // redundant revision is filed, which is what happened before this existed.
+    return null;
+  }
+}
+
+/**
+ * Deep equality for two stored CBD payloads: key order is irrelevant (jsonb
+ * does not preserve it) and a missing key matches an explicit null (undefined
+ * values never reach the database). A false negative only costs a redundant
+ * revision row; a false positive would drop a real change, so nothing is
+ * normalized away beyond that.
+ */
+function sameCbdContent(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (typeof left === "number" && typeof right === "number") return Math.abs(left - right) < 1e-9;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+    return left.every((entry, index) => sameCbdContent(entry, right[index]));
+  }
+  if (left && right && typeof left === "object" && typeof right === "object") {
+    const keys = (value: object) =>
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, entry]) => entry !== undefined && entry !== null)
+        .map(([key]) => key)
+        .sort();
+    const leftKeys = keys(left);
+    const rightKeys = keys(right);
+    if (leftKeys.length !== rightKeys.length) return false;
+    if (leftKeys.some((key, index) => key !== rightKeys[index])) return false;
+    return leftKeys.every((key) =>
+      sameCbdContent((left as Record<string, unknown>)[key], (right as Record<string, unknown>)[key])
+    );
+  }
+  return false;
 }
 
 async function getClarificationReturnStatus(
