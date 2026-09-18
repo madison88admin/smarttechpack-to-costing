@@ -128,10 +128,17 @@ describe("POST /api/admin/sync-nextgen-historical", () => {
       body: { Data: productRows, Total: 2 }
     });
 
-    // One row already exists for the same style+factory → skipped.
+    // Product 14451 is already in the pool → skipped. A second product that only
+    // *looks* like it (same style + factory) is a different ERP record and lands.
     const { client, calls } = createMockSupabase({
       historical_costings: {
-        select: () => ({ data: [{ style_number: "M88100481 - 3", factory_name: "Hangzhou U-Jump Arts and Crafts Co. Ltd" }], error: null }),
+        select: (chain) => {
+          // The product grid carries the ERP id as `Id`, so the lookup filters
+          // on that JSON path -- the same one the inserted row is keyed on.
+          expect(chain.in?.[0]?.[0]).toBe("raw_payload->>Id");
+          expect(chain.in?.[0]?.[1]).toEqual(["14451", "14267"]);
+          return { data: [{ nextgen_entity_id: "14451", payload_id: null, payload_Id: 14451 }], error: null };
+        },
         insert: () => ({ data: [], error: null })
       }
     });
@@ -166,9 +173,53 @@ describe("POST /api/admin/sync-nextgen-historical", () => {
     expect(row.raw_payload).toEqual(productRows[1]);
   });
 
+  // The whole point of keying on the ERP record: running the same sync again
+  // adds nothing. This is the second run of the very same batch, with the rows
+  // the first run inserted now coming back from the pool.
+  it("adds nothing when the same sync runs twice", async () => {
+    await adminSession();
+    (mocks.nextGenPost as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      status: 200,
+      upstreamContentType: "application/json",
+      body: { Data: productRows, Total: 2 }
+    });
+
+    const first = createMockSupabase({
+      historical_costings: { select: () => ({ data: [], error: null }), insert: () => ({ data: [], error: null }) }
+    });
+    mocks.client = first.client;
+    const run = () =>
+      POST(
+        new Request("http://localhost/api/admin/sync-nextgen-historical", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ statuses: "Dropped", limit: "50" })
+        })
+      );
+    const firstBody = await (await run()).json();
+    expect(firstBody.inserted).toBe(2);
+
+    // What the pool holds after run one, as PostgREST projects it for the lookup.
+    const stored = productRows.map((row) => ({
+      nextgen_entity_id: String(row.Id),
+      payload_id: null,
+      payload_Id: row.Id
+    }));
+    const second = createMockSupabase({
+      historical_costings: { select: () => ({ data: stored, error: null }), insert: () => ({ data: [], error: null }) }
+    });
+    mocks.client = second.client;
+    const secondBody = await (await run()).json();
+
+    expect(secondBody.alreadySynced).toBe(2);
+    expect(secondBody.inserted).toBe(0);
+    expect(inserts(second.calls, "historical_costings")).toHaveLength(0);
+  });
+
   it("inserts in batches of 50 and aggregates failures", async () => {
     await adminSession();
-    const rows = Array.from({ length: 110 }, (_, i) => ({
+    const batch = Array.from({ length: 110 }, (_, i) => ({
       Id: 1000 + i,
       Name: `STYLE-${i}`,
       StatusName: "Dropped",
@@ -178,7 +229,7 @@ describe("POST /api/admin/sync-nextgen-historical", () => {
       ok: true,
       status: 200,
       upstreamContentType: "application/json",
-      body: { Data: rows, Total: rows.length }
+      body: { Data: batch, Total: batch.length }
     });
 
     let insertCalls = 0;

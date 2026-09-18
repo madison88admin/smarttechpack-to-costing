@@ -32,6 +32,16 @@ like-style scoring (`findLikeStyles`, `LIKE_STYLE_WEIGHTS`, `matchConfidence`) a
 benchmarks. Routes under `src/app/api/historical/*` and the history exports are thin —
 role check, cache, delegate — and must not query the table themselves.
 
+Import identity is the same owner: `historicalImportKey` (the ERP record a row came from,
+`id`/`Id` in the payload, content only for exports without an id),
+`listExistingHistoricalImportKeys` and `dedupeHistoricalImports` are what both writers —
+`api/admin/import-historical` (Data Bank export) and `api/admin/sync-nextgen-historical`
+(product grid) — call before inserting, so re-running an import cannot add a second row for
+a record the pool already holds. `historicalDedupKey` (style + factory, in
+`src/lib/nextgen/historical.ts`) is only the *match* key `backfill-nextgen-times` uses to
+find the row a new SMV belongs to; it is not an identity and must not be used to decide
+whether something is new.
+
 ## Vocabularies and access rules — `src/lib/auth/roles.ts`
 
 Statuses (`src/lib/workflow/status.ts`), actions (`src/lib/costing/actions.ts`) and customer
